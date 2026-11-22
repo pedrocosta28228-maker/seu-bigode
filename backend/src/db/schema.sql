@@ -87,3 +87,12 @@ CREATE TABLE IF NOT EXISTS movimentacoes_caixa (
 
 CREATE INDEX IF NOT EXISTS idx_agendamentos_barbeiro_data
   ON agendamentos (barbeiro_id, data, status);
+
+CREATE TABLE IF NOT EXISTS configuracoes_barbearia (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  nome TEXT NOT NULL DEFAULT 'Seu Bigode',
+  whatsapp TEXT NOT NULL DEFAULT '5511999999999',
+  pix_chave TEXT NOT NULL DEFAULT '',
+  pix_tipo TEXT NOT NULL DEFAULT 'Celular',
+  pix_titular TEXT NOT NULL DEFAULT 'Barbearia Seu Bigode'
+);

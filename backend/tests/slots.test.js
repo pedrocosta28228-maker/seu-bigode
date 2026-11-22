@@ -31,7 +31,7 @@ describe('Motor de Horários Livres (Seu Bigode)', () => {
     assert.equal(slots.length, 0);
   });
 
-  it('respeita o horário de almoço (12:00 às 13:00)', () => {
+  it('respeita o horário de almoço (12:00 às 14:00) de segunda a sexta', () => {
     const slots = getAvailableSlots({
       db,
       barbeiroId: 1,
@@ -41,10 +41,28 @@ describe('Motor de Horários Livres (Seu Bigode)', () => {
     });
     const horas = slots.map((s) => s.horaInicio);
 
+    assert.ok(horas.includes('07:00'), '07:00 é a abertura');
     assert.ok(horas.includes('11:30'), '11:30 (termina 12:00) deve estar livre');
     assert.ok(!horas.includes('12:00'), '12:00 está no almoço');
-    assert.ok(!horas.includes('12:30'), '12:30 está no almoço');
-    assert.ok(horas.includes('13:00'), '13:00 volta do almoço');
+    assert.ok(!horas.includes('13:30'), '13:30 ainda está no almoço');
+    assert.ok(horas.includes('14:00'), '14:00 volta do almoço');
+  });
+
+  it('funciona no sábado das 07:00 às 12:00 sem expediente à tarde', () => {
+    const SABADO = '2026-11-28';
+    const slots = getAvailableSlots({
+      db,
+      barbeiroId: 1,
+      data: SABADO,
+      duracaoMin: 30,
+      agora: AGORA_ANTES_ABERTURA
+    });
+    const horas = slots.map((s) => s.horaInicio);
+
+    assert.ok(horas.includes('07:00'));
+    assert.ok(horas.includes('11:30'));
+    assert.ok(!horas.includes('12:00'));
+    assert.ok(!horas.includes('14:00'));
   });
 
   it('bloqueia horários que invadiriam o almoço para combos longos (60 min)', () => {
@@ -115,10 +133,10 @@ describe('Motor de Horários Livres (Seu Bigode)', () => {
     });
 
     assert.equal(calendario.length, 7);
-    assert.equal(calendario[0].data, '2026-11-22'); // Domingo
+    assert.equal(calendario[0].data, '2026-11-22'); // Domingo (fechado)
     assert.equal(calendario[0].disponivel, false);
-    assert.equal(calendario[1].data, '2026-11-23'); // Segunda (fechado)
-    assert.equal(calendario[1].disponivel, false);
+    assert.equal(calendario[1].data, '2026-11-23'); // Segunda (aberto 07h-19h)
+    assert.equal(calendario[1].disponivel, true);
     assert.equal(calendario[2].data, '2026-11-24'); // Terça (aberto)
     assert.equal(calendario[2].disponivel, true);
     assert.ok(calendario[2].totalHorariosLivres > 0);

@@ -1,27 +1,45 @@
-import { CheckCircle2, Calendar, Clock, Scissors, User, MessageCircle, RotateCcw } from 'lucide-react';
+import { useState } from 'react';
+import {
+  Check,
+  CheckCircle2,
+  Calendar,
+  Clock,
+  Copy,
+  MessageCircle,
+  QrCode,
+  RotateCcw,
+  Scissors,
+  User
+} from 'lucide-react';
 import { formatCurrency, formatDuration, formatFullDate } from '../utils/format.js';
+import { montarLinkWhatsappCliente } from '../utils/whatsapp.js';
 
-export function ComprovanteCard({ agendamento, barbeariaWhatsapp, onNovoAgendamento }) {
-  const nomesServicos = agendamento.servicos.map((s) => s.nome).join(', ');
-  const textoWhatsapp = encodeURIComponent(
-    `Olá, Seu Bigode! Acabei de agendar pelo site:\n` +
-      `Código: ${agendamento.codigo}\n` +
-      `Cliente: ${agendamento.clienteNome}\n` +
-      `Barbeiro: ${agendamento.barbeiro.nome}\n` +
-      `Data: ${formatFullDate(agendamento.data)} às ${agendamento.horaInicio}\n` +
-      `Serviços: ${nomesServicos}\n` +
-      `Total: ${formatCurrency(agendamento.totalCentavos)}`
-  );
+export function ComprovanteCard({ agendamento, config, onNovoAgendamento }) {
+  const [copiado, setCopiado] = useState(false);
 
-  const linkWhatsapp = `https://wa.me/${barbeariaWhatsapp}?text=${textoWhatsapp}`;
+  const linkWhatsapp = montarLinkWhatsappCliente({ agendamento, config });
+
+  async function copiarChavePix() {
+    if (!config?.pixChave) return;
+    try {
+      await navigator.clipboard.writeText(config.pixChave);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
+    } catch {
+      // fallback silencioso caso clipboard não esteja disponível
+    }
+  }
 
   return (
     <section className="comprovante-card" aria-live="polite">
       <div className="comprovante-topo">
         <CheckCircle2 size={44} className="comprovante-icone" />
-        <span className="comprovante-codigo">{agendamento.codigo}</span>
-        <h2>Horário Confirmado!</h2>
-        <p>Apresente este comprovante ao chegar na barbearia Seu Bigode.</p>
+        <div className="comprovante-badges">
+          <span className="comprovante-numero">ATENDIMENTO Nº {agendamento.id}</span>
+          <span className="comprovante-codigo">{agendamento.codigo}</span>
+        </div>
+        <h2>Horário Agendado!</h2>
+        <p>Apresente este comprovante na barbearia {config?.nome || 'Seu Bigode'}.</p>
       </div>
 
       <div className="comprovante-detalhes">
@@ -68,9 +86,33 @@ export function ComprovanteCard({ agendamento, barbeariaWhatsapp, onNovoAgendame
       </div>
 
       <div className="comprovante-total">
-        <span>Total a pagar na barbearia</span>
+        <span>Total do atendimento</span>
         <strong>{formatCurrency(agendamento.totalCentavos)}</strong>
       </div>
+
+      {config?.pixChave && (
+        <div className="pix-box">
+          <div className="pix-box-topo">
+            <QrCode size={18} />
+            <strong>Quer adiantar pelo Pix? (opcional)</strong>
+          </div>
+          <p className="pix-box-desc">
+            Pague agora e envie o comprovante no WhatsApp, ou pague na barbearia após o corte.
+          </p>
+          <div className="pix-chave-linha">
+            <div>
+              <span className="pix-tipo">
+                {config.pixTipo || 'Chave Pix'} — {config.pixTitular || config.nome}
+              </span>
+              <code className="pix-chave-valor">{config.pixChave}</code>
+            </div>
+            <button type="button" className="btn-copiar-pix" onClick={copiarChavePix}>
+              {copiado ? <Check size={15} /> : <Copy size={15} />}
+              {copiado ? 'Copiado!' : 'Copiar Pix'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="comprovante-acoes">
         <a
@@ -80,7 +122,7 @@ export function ComprovanteCard({ agendamento, barbeariaWhatsapp, onNovoAgendame
           className="btn-primario btn-whatsapp"
         >
           <MessageCircle size={18} />
-          Enviar resumo no WhatsApp
+          Enviar comprovante no WhatsApp
         </a>
 
         <button type="button" className="btn-secundario" onClick={onNovoAgendamento}>

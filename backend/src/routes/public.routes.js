@@ -14,15 +14,26 @@ function gerarCodigoAgendamento() {
   return `SB-${numero}${sufixo}`;
 }
 
-export function createPublicRouter(db, config = {}) {
+export function createPublicRouter(db, config = {}, eventHub = null) {
   const router = Router();
 
-  // Informações públicas da barbearia (nome, WhatsApp para contato/cancelamento)
+  // Informações públicas da barbearia (nome, WhatsApp e Pix para o comprovante)
   router.get('/config', (_req, res) => {
+    const cfg = db
+      .prepare(
+        `SELECT nome, whatsapp, pix_chave AS pixChave, pix_tipo AS pixTipo, pix_titular AS pixTitular
+         FROM configuracoes_barbearia
+         WHERE id = 1`
+      )
+      .get();
+
     res.json({
-      nome: config.barbeariaNome || 'Seu Bigode',
+      nome: cfg?.nome || config.barbeariaNome || 'Seu Bigode',
       desde: 2019,
-      whatsapp: config.barbeariaWhatsapp || '5511999999999'
+      whatsapp: cfg?.whatsapp || config.barbeariaWhatsapp || '5511999999999',
+      pixChave: cfg?.pixChave || '',
+      pixTipo: cfg?.pixTipo || 'Celular',
+      pixTitular: cfg?.pixTitular || 'Barbearia Seu Bigode'
     });
   });
 
@@ -221,7 +232,7 @@ export function createPublicRouter(db, config = {}) {
 
       db.exec('COMMIT');
 
-      return res.status(201).json({
+      const resposta = {
         id: agendamentoId,
         codigo,
         barbeiro,
@@ -234,7 +245,11 @@ export function createPublicRouter(db, config = {}) {
         totalCentavos,
         servicos,
         status: 'agendado'
-      });
+      };
+
+      eventHub?.broadcast('novo_agendamento', resposta);
+
+      return res.status(201).json(resposta);
     } catch (error) {
       try {
         db.exec('ROLLBACK');
