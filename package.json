@@ -1,0 +1,16 @@
+{
+  "name": "seu-bigode-barbearia",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema de agendamento, agenda e caixa da Barbearia Seu Bigode (Desde 2019)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix backend install --omit=dev && npm --prefix frontend install --include=dev && npm --prefix frontend run build",
+    "start": "npm --prefix backend start",
+    "test": "npm --prefix backend test"
+  }
+}
