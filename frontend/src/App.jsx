@@ -83,5 +83,5 @@ export default function App() {
     );
   }
 
-  return <AgendarPage onAbrirAdmin={() => navegar('admin')} />;
+  return <AgendarPage />;
 }

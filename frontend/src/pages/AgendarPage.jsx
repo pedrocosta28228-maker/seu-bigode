@@ -27,7 +27,7 @@ const CATEGORIAS = [
   { id: 'extra', label: 'Extras' }
 ];
 
-export function AgendarPage({ onAbrirAdmin }) {
+export function AgendarPage() {
   const [config, setConfig] = useState({ nome: 'Seu Bigode', desde: 2019, whatsapp: '5511999999999' });
   const [barbeiros, setBarbeiros] = useState([]);
   const [servicos, setServicos] = useState([]);
@@ -235,11 +235,6 @@ export function AgendarPage({ onAbrirAdmin }) {
             <h1 className="hero-titulo">{config.nome}</h1>
             <p className="hero-subtitulo">Agende seu horário online.</p>
           </div>
-          {onAbrirAdmin && (
-            <button type="button" className="btn-area-barbeiro" onClick={onAbrirAdmin}>
-              Área do Barbeiro
-            </button>
-          )}
         </div>
       </header>
 
