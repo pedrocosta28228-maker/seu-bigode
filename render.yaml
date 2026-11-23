@@ -1,0 +1,14 @@
+# Blueprint de deploy no Render.com (Barbearia Seu Bigode)
+services:
+  - type: web
+    name: seu-bigode-barbearia
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true

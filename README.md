@@ -75,6 +75,10 @@ seu-bigode/
 
 ## Como Rodar Localmente
 
+### Jeito rápido no Windows (duplo clique)
+Dê duplo clique em **`iniciar-seu-bigode.bat`** na pasta do projeto — ele compila o frontend (se necessário), inicia o servidor único na porta `3001` e abre o navegador automaticamente em `http://localhost:3001`.
+
+### Manual (desenvolvimento com recarregamento ao vivo)
 1. Instale as dependências:
    ```bash
    npm --prefix backend install
@@ -90,9 +94,8 @@ seu-bigode/
    npm run dev:frontend
    ```
 4. Acesse no navegador:
-   - **Tela do Cliente:** `http://localhost:5173`
-   - **Painel do Barbeiro:** `http://localhost:5173/admin`
-     - Acesso inicial de teste: `dono@seubigode.com` / senha `123456`
+   - **Tela do Cliente:** `http://localhost:5173` (ou `http://localhost:3001` via `.bat`)
+   - **Painel do Barbeiro:** `http://localhost:5173/admin` (ou `http://localhost:3001/admin`)
 
 ### Rodar Testes Automatizados
 ```bash

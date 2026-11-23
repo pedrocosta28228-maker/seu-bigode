@@ -691,7 +691,7 @@ export function AdminPage({ barbeiroLogado, onAtualizarBarbeiroLogado, onLogout,
                               className="btn-acao btn-whats"
                               title="Enviar confirmação com chave Pix no WhatsApp do cliente"
                             >
-                              <MessageCircle size={14} /> Confirmar + Pix no WhatsApp
+                              <MessageCircle size={14} /> WhatsApp + Pix
                             </a>
 
                             {ag.status === 'agendado' && (

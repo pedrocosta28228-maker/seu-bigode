@@ -233,9 +233,7 @@ export function AgendarPage({ onAbrirAdmin }) {
           <div>
             <span className="hero-selinho">DESDE {config.desde}</span>
             <h1 className="hero-titulo">{config.nome}</h1>
-            <p className="hero-subtitulo">
-              Escolha seus serviços, veja os horários livres da semana e agende em segundos.
-            </p>
+            <p className="hero-subtitulo">Agende seu horário online.</p>
           </div>
           {onAbrirAdmin && (
             <button type="button" className="btn-area-barbeiro" onClick={onAbrirAdmin}>
@@ -266,8 +264,7 @@ export function AgendarPage({ onAbrirAdmin }) {
               <div className="secao-cabecalho">
                 <span className="passo-badge">1</span>
                 <div>
-                  <h2>Escolha os serviços</h2>
-                  <p>Você pode marcar mais de um — o preço e o tempo somam automaticamente.</p>
+                  <h2>Serviços</h2>
                 </div>
               </div>
 
@@ -299,7 +296,6 @@ export function AgendarPage({ onAbrirAdmin }) {
                       <div className="servico-topo">
                         <div className="servico-info">
                           <strong>{servico.nome}</strong>
-                          {servico.descricao && <p>{servico.descricao}</p>}
                         </div>
                         <span className="servico-check" aria-hidden="true">
                           {selecionado ? <Check size={16} /> : <Scissors size={15} />}
@@ -326,8 +322,7 @@ export function AgendarPage({ onAbrirAdmin }) {
               <div className="secao-cabecalho">
                 <span className="passo-badge">2</span>
                 <div>
-                  <h2>Escolha o barbeiro</h2>
-                  <p>Prefere alguém específico ou o primeiro horário disponível?</p>
+                  <h2>Barbeiro</h2>
                 </div>
               </div>
 
@@ -342,7 +337,7 @@ export function AgendarPage({ onAbrirAdmin }) {
                   </div>
                   <div className="barbeiro-texto">
                     <strong>Qualquer disponível</strong>
-                    <span>Mostra todos os horários livres da barbearia</span>
+                    <span>Primeiro horário livre</span>
                   </div>
                 </button>
 
@@ -370,12 +365,10 @@ export function AgendarPage({ onAbrirAdmin }) {
               <div className="secao-cabecalho">
                 <span className="passo-badge">3</span>
                 <div>
-                  <h2>Escolha o dia e o horário</h2>
-                  <p>
-                    {resumo.duracaoMin > 0
-                      ? `Mostrando horários livres para ${formatDuration(resumo.duracaoMin)} de atendimento.`
-                      : 'Navegue pelos próximos dias para conferir os horários disponíveis.'}
-                  </p>
+                  <h2>Dia e horário</h2>
+                  {resumo.duracaoMin > 0 && (
+                    <p>Duração total: {formatDuration(resumo.duracaoMin)}</p>
+                  )}
                 </div>
               </div>
 
@@ -407,20 +400,16 @@ export function AgendarPage({ onAbrirAdmin }) {
                 <span className="passo-badge">4</span>
                 <div>
                   <h2>Seus dados</h2>
-                  <p>Sem cadastro nem senha — só o básico para reservar seu horário.</p>
                 </div>
               </div>
 
               <div className="campos-grid">
                 <div className="campo">
-                  <label htmlFor="cliente-nome">Seu nome</label>
-                  <span id="cliente-nome-dica" className="campo-dica">
-                    Como o barbeiro deve te chamar
-                  </span>
+                  <label htmlFor="cliente-nome">Nome</label>
                   <input
                     id="cliente-nome"
                     type="text"
-                    placeholder="Ex.: Pedro Henrique"
+                    placeholder="Seu nome"
                     value={clienteNome}
                     onChange={(e) => {
                       setClienteNome(e.target.value);
@@ -432,11 +421,7 @@ export function AgendarPage({ onAbrirAdmin }) {
                     minLength={2}
                     required
                     aria-invalid={camposInvalidos.nome ? 'true' : 'false'}
-                    aria-describedby={
-                      camposInvalidos.nome
-                        ? 'cliente-nome-dica cliente-nome-erro'
-                        : 'cliente-nome-dica'
-                    }
+                    aria-describedby={camposInvalidos.nome ? 'cliente-nome-erro' : undefined}
                   />
                   <span id="cliente-nome-erro" className="campo-erro">
                     <span role="img" aria-label="Erro">!</span> Informe pelo menos 2 letras do seu nome.
@@ -444,15 +429,12 @@ export function AgendarPage({ onAbrirAdmin }) {
                 </div>
 
                 <div className="campo">
-                  <label htmlFor="cliente-whatsapp">WhatsApp (com DDD)</label>
-                  <span id="cliente-whatsapp-dica" className="campo-dica">
-                    Formato: (11) 99999-9999
-                  </span>
+                  <label htmlFor="cliente-whatsapp">WhatsApp</label>
                   <input
                     id="cliente-whatsapp"
                     type="tel"
                     inputMode="tel"
-                    placeholder="(11) 99999-9999"
+                    placeholder="(84) 99999-9999"
                     value={clienteWhatsapp}
                     onChange={(e) => {
                       setClienteWhatsapp(maskWhatsapp(e.target.value));
@@ -464,24 +446,20 @@ export function AgendarPage({ onAbrirAdmin }) {
                     pattern="\(\d{2}\) \d{4,5}-\d{4}"
                     required
                     aria-invalid={camposInvalidos.whatsapp ? 'true' : 'false'}
-                    aria-describedby={
-                      camposInvalidos.whatsapp
-                        ? 'cliente-whatsapp-dica cliente-whatsapp-erro'
-                        : 'cliente-whatsapp-dica'
-                    }
+                    aria-describedby={camposInvalidos.whatsapp ? 'cliente-whatsapp-erro' : undefined}
                   />
                   <span id="cliente-whatsapp-erro" className="campo-erro">
-                    <span role="img" aria-label="Erro">!</span> Digite um WhatsApp válido com DDD, ex.: (11) 99999-9999.
+                    <span role="img" aria-label="Erro">!</span> Digite um WhatsApp válido com DDD.
                   </span>
                 </div>
               </div>
 
               <div className="campo campo-full">
-                <label htmlFor="cliente-obs">Alguma observação? (opcional)</label>
+                <label htmlFor="cliente-obs">Observação (opcional)</label>
                 <input
                   id="cliente-obs"
                   type="text"
-                  placeholder="Ex.: Degradê navalhado na zero, deixar em cima mais cheio..."
+                  placeholder="Ex.: Degradê navalhado na zero..."
                   value={observacoes}
                   onChange={(e) => setObservacoes(e.target.value)}
                 />

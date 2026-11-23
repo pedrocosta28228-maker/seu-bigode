@@ -3,7 +3,7 @@ import { AlertCircle, ArrowLeft, Lock } from 'lucide-react';
 import { adminApi } from '../services/adminApi.js';
 
 export function LoginPage({ onLoginSucesso, onVoltarCliente }) {
-  const [email, setEmail] = useState('dono@seubigode.com');
+  const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState('');
@@ -33,7 +33,7 @@ export function LoginPage({ onLoginSucesso, onVoltarCliente }) {
           />
           <span className="hero-selinho login-selinho">PAINEL DO BARBEIRO</span>
           <h1>Seu Bigode</h1>
-          <p>Entre para gerenciar a agenda, equipe e serviços.</p>
+          <p>Acesse sua agenda e controle de caixa.</p>
         </div>
 
         {erro && (
@@ -49,6 +49,7 @@ export function LoginPage({ onLoginSucesso, onVoltarCliente }) {
             <input
               id="login-email"
               type="email"
+              placeholder="seu@email.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
@@ -71,18 +72,13 @@ export function LoginPage({ onLoginSucesso, onVoltarCliente }) {
 
           <button type="submit" className="btn-primario btn-full" disabled={carregando}>
             <Lock size={16} />
-            {carregando ? 'Entrando...' : 'Entrar no Painel'}
+            {carregando ? 'Entrando...' : 'Entrar'}
           </button>
         </form>
 
-        <div className="login-dica">
-          <strong>Acesso inicial de teste:</strong>
-          <span>dono@seubigode.com • senha: 123456</span>
-        </div>
-
         <button type="button" className="btn-link-voltar" onClick={onVoltarCliente}>
           <ArrowLeft size={16} />
-          Voltar para a tela do cliente
+          Voltar ao agendamento
         </button>
       </div>
     </div>
