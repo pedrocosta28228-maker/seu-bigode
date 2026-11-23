@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { hashPassword } from '../services/auth.service.js';
 import { formatLocalDate, isValidDateString } from '../services/slots.service.js';
+import { requireRole } from '../middlewares/security.middleware.js';
 
 const STATUS_VALIDOS = new Set([
   'agendado',
@@ -65,22 +66,38 @@ export function createAdminRouter(db, eventHub, requireAuth) {
       ...params
     );
 
-    const agendamentos = [];
-    for (const row of rows) {
-      const servicos = await db.all(
-        `SELECT id, servico_id AS "servicoId", nome_snapshot AS nome,
-                preco_centavos_snapshot AS "precoCentavos", duracao_min_snapshot AS "duracaoMin"
+    // Busca todos os serviços dos agendamentos em 1 única query (evita problema N+1)
+    const itensPorAgendamento = new Map();
+    if (rows.length > 0) {
+      const agIds = rows.map((r) => r.id);
+      const placeholders = agIds.map(() => '?').join(', ');
+      const todosItens = await db.all(
+        `SELECT id, agendamento_id AS "agendamentoId", servico_id AS "servicoId",
+                nome_snapshot AS nome, preco_centavos_snapshot AS "precoCentavos",
+                duracao_min_snapshot AS "duracaoMin"
          FROM agendamento_servicos
-         WHERE agendamento_id = ?`,
-        row.id
+         WHERE agendamento_id IN (${placeholders})`,
+        ...agIds
       );
-      agendamentos.push({
-        ...row,
-        duracaoTotalMin: Number(row.duracaoTotalMin),
-        totalCentavos: Number(row.totalCentavos),
-        servicos
-      });
+      for (const item of todosItens) {
+        const chave = Number(item.agendamentoId);
+        if (!itensPorAgendamento.has(chave)) itensPorAgendamento.set(chave, []);
+        itensPorAgendamento.get(chave).push({
+          id: item.id,
+          servicoId: item.servicoId,
+          nome: item.nome,
+          precoCentavos: Number(item.precoCentavos),
+          duracaoMin: Number(item.duracaoMin)
+        });
+      }
     }
+
+    const agendamentos = rows.map((row) => ({
+      ...row,
+      duracaoTotalMin: Number(row.duracaoTotalMin),
+      totalCentavos: Number(row.totalCentavos),
+      servicos: itensPorAgendamento.get(Number(row.id)) || []
+    }));
 
     const ativos = agendamentos.filter((a) => a.status !== 'cancelado' && a.status !== 'no_show');
     const resumo = {
@@ -276,7 +293,7 @@ export function createAdminRouter(db, eventHub, requireAuth) {
     res.json(rows.map((b) => ({ ...b, ativo: Boolean(b.ativo) })));
   });
 
-  router.post('/barbeiros', async (req, res) => {
+  router.post('/barbeiros', requireRole('dono'), async (req, res) => {
     const nome = String(req.body?.nome || '').trim();
     const especialidade = String(req.body?.especialidade || 'Barbeiro').trim();
     const telefone = String(req.body?.telefone || '').replace(/\D/g, '');
@@ -380,7 +397,7 @@ export function createAdminRouter(db, eventHub, requireAuth) {
     );
   });
 
-  router.put('/config', async (req, res) => {
+  router.put('/config', requireRole('dono'), async (req, res) => {
     const nome = String(req.body?.nome || 'Seu Bigode').trim();
     const whatsapp = String(req.body?.whatsapp || '').replace(/\D/g, '');
     const pixChave = String(req.body?.pixChave || '').trim();

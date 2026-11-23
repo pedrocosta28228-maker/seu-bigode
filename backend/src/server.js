@@ -8,6 +8,7 @@ import { createDatabase } from './db/database.js';
 import { seedDatabase } from './db/seed.js';
 import { createEventHub } from './services/events.service.js';
 import { createAuthMiddleware } from './middlewares/auth.middleware.js';
+import { createRateLimiter, securityHeaders } from './middlewares/security.middleware.js';
 import { createPublicRouter } from './routes/public.routes.js';
 import { createAuthRouter } from './routes/auth.routes.js';
 import { createAdminRouter } from './routes/admin.routes.js';
@@ -28,9 +29,28 @@ export function createApp(db, config = {}) {
   }
 
   const requireAuth = createAuthMiddleware(db, jwtSecret);
+  const corsOrigin = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true;
 
-  app.use(cors());
-  app.use(express.json());
+  app.set('trust proxy', 1);
+  app.disable('x-powered-by');
+  app.use(securityHeaders);
+  app.use(cors({ origin: corsOrigin }));
+  app.use(express.json({ limit: '100kb' }));
+
+  // Proteção contra força bruta no login e spam de agendamentos
+  const loginLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 15,
+    message: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.'
+  });
+  const agendamentoLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: 'Muitos agendamentos seguidos. Aguarde alguns minutos.'
+  });
+
+  app.use('/api/auth/login', loginLimiter);
+  app.post('/api/public/agendamentos', agendamentoLimiter);
 
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', app: 'seu-bigode', db: db.type });
@@ -43,12 +63,18 @@ export function createApp(db, config = {}) {
 
   // Serve o frontend compilado (usado no atalho iniciar-seu-bigode.bat e em produção)
   if (existsSync(join(FRONTEND_DIST, 'index.html'))) {
-    app.use(express.static(FRONTEND_DIST));
+    app.use(express.static(FRONTEND_DIST, { maxAge: isProd ? '1d' : 0 }));
     app.get('/{*splat}', (req, res, next) => {
       if (req.path.startsWith('/api/')) return next();
       res.sendFile(join(FRONTEND_DIST, 'index.html'));
     });
   }
+
+  // Tratador global de erros — nunca vaza stack trace para o cliente
+  app.use((err, _req, res, _next) => {
+    console.error('Erro não tratado:', err);
+    res.status(500).json({ erro: 'Erro interno no servidor.' });
+  });
 
   return app;
 }
