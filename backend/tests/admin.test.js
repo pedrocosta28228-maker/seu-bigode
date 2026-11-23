@@ -11,8 +11,8 @@ describe('API Administrativa do Barbeiro (Fase 2)', () => {
   let token;
 
   before(async () => {
-    db = createDatabase(':memory:');
-    seedDatabase(db);
+    db = await createDatabase(':memory:');
+    await seedDatabase(db);
     const app = createApp(db, { jwtSecret: 'test-secret-seu-bigode' });
 
     await new Promise((resolve) => {
@@ -156,5 +156,24 @@ describe('API Administrativa do Barbeiro (Fase 2)', () => {
       await fetch(`${baseUrl}/api/public/horarios?barbeiroId=2&data=${dia.data}&duracaoMin=30`)
     ).json();
     assert.equal(horariosDepois.length, 0);
+  });
+
+  it('permite trocar a senha do barbeiro autenticado', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/senha`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ senhaAtual: '123456', novaSenha: 'nova-senha-segura' })
+    });
+    assert.equal(res.status, 200);
+
+    const loginNovo = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'dono@seubigode.com', senha: 'nova-senha-segura' })
+    });
+    assert.equal(loginNovo.status, 200);
   });
 });

@@ -1,13 +1,12 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createDatabase } from '../src/db/database.js';
+import { createDatabase, traduzirPlaceholdersPg } from '../src/db/database.js';
 import { seedDatabase } from '../src/db/seed.js';
 import {
   getAvailableSlots,
   getCalendarAvailability
 } from '../src/services/slots.service.js';
 
-// Data fixa de teste: terça-feira 2026-11-24 (barbearia aberta 09:00-19:00, almoço 12:00-13:00)
 const TERCA = '2026-11-24';
 const DOMINGO = '2026-11-22';
 const AGORA_ANTES_ABERTURA = new Date(2026, 10, 22, 8, 0, 0);
@@ -15,13 +14,21 @@ const AGORA_ANTES_ABERTURA = new Date(2026, 10, 22, 8, 0, 0);
 describe('Motor de Horários Livres (Seu Bigode)', () => {
   let db;
 
-  beforeEach(() => {
-    db = createDatabase(':memory:');
-    seedDatabase(db);
+  beforeEach(async () => {
+    db = await createDatabase(':memory:');
+    await seedDatabase(db);
   });
 
-  it('retorna lista vazia em dias fechados (Domingo)', () => {
-    const slots = getAvailableSlots({
+  it('traduz placeholders SQLite (?) para PostgreSQL ($1, $2)', () => {
+    const sql = "SELECT * FROM barbeiros WHERE id = ? AND nome != 'a?b' AND ativo = ?";
+    assert.equal(
+      traduzirPlaceholdersPg(sql),
+      "SELECT * FROM barbeiros WHERE id = $1 AND nome != 'a?b' AND ativo = $2"
+    );
+  });
+
+  it('retorna lista vazia em dias fechados (Domingo)', async () => {
+    const slots = await getAvailableSlots({
       db,
       barbeiroId: 1,
       data: DOMINGO,
@@ -31,8 +38,8 @@ describe('Motor de Horários Livres (Seu Bigode)', () => {
     assert.equal(slots.length, 0);
   });
 
-  it('respeita o horário de almoço (12:00 às 14:00) de segunda a sexta', () => {
-    const slots = getAvailableSlots({
+  it('respeita o horário de almoço (12:00 às 14:00) de segunda a sexta', async () => {
+    const slots = await getAvailableSlots({
       db,
       barbeiroId: 1,
       data: TERCA,
@@ -48,9 +55,9 @@ describe('Motor de Horários Livres (Seu Bigode)', () => {
     assert.ok(horas.includes('14:00'), '14:00 volta do almoço');
   });
 
-  it('funciona no sábado das 07:00 às 12:00 sem expediente à tarde', () => {
+  it('funciona no sábado das 07:00 às 12:00 sem expediente à tarde', async () => {
     const SABADO = '2026-11-28';
-    const slots = getAvailableSlots({
+    const slots = await getAvailableSlots({
       db,
       barbeiroId: 1,
       data: SABADO,
@@ -65,8 +72,8 @@ describe('Motor de Horários Livres (Seu Bigode)', () => {
     assert.ok(!horas.includes('14:00'));
   });
 
-  it('bloqueia horários que invadiriam o almoço para combos longos (60 min)', () => {
-    const slots = getAvailableSlots({
+  it('bloqueia horários que invadiriam o almoço para combos longos (60 min)', async () => {
+    const slots = await getAvailableSlots({
       db,
       barbeiroId: 1,
       data: TERCA,
@@ -81,32 +88,36 @@ describe('Motor de Horários Livres (Seu Bigode)', () => {
     assert.ok(horas.includes('18:00'), '18:00–19:00 cabe no fim do dia');
   });
 
-  it('isola agendamentos entre barbeiros diferentes', () => {
-    // Ocupa 10:00-11:00 apenas no Barbeiro 1
-    db.prepare(
+  it('isola agendamentos entre barbeiros diferentes', async () => {
+    await db.run(
       `INSERT INTO agendamentos (
         codigo, barbeiro_id, cliente_nome, cliente_whatsapp,
         data, hora_inicio, hora_fim, duracao_total_min, total_centavos
-      ) VALUES ('SB-0001A', 1, 'Carlos', '11999990000', ?, '10:00', '11:00', 60, 7000)`
-    ).run(TERCA);
+      ) VALUES ('SB-0001A', 1, 'Carlos', '11999990000', ?, '10:00', '11:00', 60, 7000)`,
+      TERCA
+    );
 
-    const slotsBarbeiro1 = getAvailableSlots({
-      db,
-      barbeiroId: 1,
-      data: TERCA,
-      duracaoMin: 30,
-      agora: AGORA_ANTES_ABERTURA
-    }).map((s) => s.horaInicio);
+    const slotsBarbeiro1 = (
+      await getAvailableSlots({
+        db,
+        barbeiroId: 1,
+        data: TERCA,
+        duracaoMin: 30,
+        agora: AGORA_ANTES_ABERTURA
+      })
+    ).map((s) => s.horaInicio);
 
-    const slotsBarbeiro2 = getAvailableSlots({
-      db,
-      barbeiroId: 2,
-      data: TERCA,
-      duracaoMin: 30,
-      agora: AGORA_ANTES_ABERTURA
-    }).map((s) => s.horaInicio);
+    const slotsBarbeiro2 = (
+      await getAvailableSlots({
+        db,
+        barbeiroId: 2,
+        data: TERCA,
+        duracaoMin: 30,
+        agora: AGORA_ANTES_ABERTURA
+      })
+    ).map((s) => s.horaInicio);
 
-    const slotsQualquer = getAvailableSlots({
+    const slotsQualquer = await getAvailableSlots({
       db,
       barbeiroId: 'qualquer',
       data: TERCA,
@@ -123,8 +134,8 @@ describe('Motor de Horários Livres (Seu Bigode)', () => {
     );
   });
 
-  it('gera resumo de calendário para os próximos 7 dias', () => {
-    const calendario = getCalendarAvailability({
+  it('gera resumo de calendário para os próximos 7 dias', async () => {
+    const calendario = await getCalendarAvailability({
       db,
       barbeiroId: 'qualquer',
       duracaoMin: 30,

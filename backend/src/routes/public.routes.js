@@ -17,15 +17,12 @@ function gerarCodigoAgendamento() {
 export function createPublicRouter(db, config = {}, eventHub = null) {
   const router = Router();
 
-  // Informações públicas da barbearia (nome, WhatsApp e Pix para o comprovante)
-  router.get('/config', (_req, res) => {
-    const cfg = db
-      .prepare(
-        `SELECT nome, whatsapp, pix_chave AS pixChave, pix_tipo AS pixTipo, pix_titular AS pixTitular
-         FROM configuracoes_barbearia
-         WHERE id = 1`
-      )
-      .get();
+  router.get('/config', async (_req, res) => {
+    const cfg = await db.get(
+      `SELECT nome, whatsapp, pix_chave AS "pixChave", pix_tipo AS "pixTipo", pix_titular AS "pixTitular"
+       FROM configuracoes_barbearia
+       WHERE id = 1`
+    );
 
     res.json({
       nome: cfg?.nome || config.barbeariaNome || 'Seu Bigode',
@@ -37,46 +34,39 @@ export function createPublicRouter(db, config = {}, eventHub = null) {
     });
   });
 
-  // Lista barbeiros ativos
-  router.get('/barbeiros', (_req, res) => {
-    const barbeiros = db
-      .prepare(
-        `SELECT id, nome, especialidade, foto_url AS fotoUrl, papel
-         FROM barbeiros
-         WHERE ativo = 1
-         ORDER BY CASE WHEN papel = 'dono' THEN 0 ELSE 1 END, id ASC`
-      )
-      .all();
+  router.get('/barbeiros', async (_req, res) => {
+    const barbeiros = await db.all(
+      `SELECT id, nome, especialidade, foto_url AS "fotoUrl", papel
+       FROM barbeiros
+       WHERE ativo = 1
+       ORDER BY CASE WHEN papel = 'dono' THEN 0 ELSE 1 END, id ASC`
+    );
 
     res.json(barbeiros);
   });
 
-  // Lista serviços ativos
-  router.get('/servicos', (_req, res) => {
-    const servicos = db
-      .prepare(
-        `SELECT id, nome, descricao, categoria, duracao_min AS duracaoMin, preco_centavos AS precoCentavos
-         FROM servicos
-         WHERE ativo = 1
-         ORDER BY CASE categoria
-           WHEN 'cabelo' THEN 1
-           WHEN 'barba' THEN 2
-           WHEN 'combo' THEN 3
-           ELSE 4
-         END, id ASC`
-      )
-      .all();
+  router.get('/servicos', async (_req, res) => {
+    const servicos = await db.all(
+      `SELECT id, nome, descricao, categoria, duracao_min AS "duracaoMin", preco_centavos AS "precoCentavos"
+       FROM servicos
+       WHERE ativo = 1
+       ORDER BY CASE categoria
+         WHEN 'cabelo' THEN 1
+         WHEN 'barba' THEN 2
+         WHEN 'combo' THEN 3
+         ELSE 4
+       END, id ASC`
+    );
 
     res.json(servicos);
   });
 
-  // Resumo dos próximos N dias para o calendário visual do cliente
-  router.get('/calendario', (req, res) => {
+  router.get('/calendario', async (req, res) => {
     const barbeiroId = req.query.barbeiroId || 'qualquer';
     const duracaoMin = Number(req.query.duracaoMin) || 30;
     const dias = Number(req.query.dias) || 14;
 
-    const calendario = getCalendarAvailability({
+    const calendario = await getCalendarAvailability({
       db,
       barbeiroId,
       duracaoMin,
@@ -86,8 +76,7 @@ export function createPublicRouter(db, config = {}, eventHub = null) {
     res.json(calendario);
   });
 
-  // Horários disponíveis para uma data específica
-  router.get('/horarios', (req, res) => {
+  router.get('/horarios', async (req, res) => {
     const barbeiroId = req.query.barbeiroId || 'qualquer';
     const data = String(req.query.data || '');
     const duracaoMin = Number(req.query.duracaoMin) || 30;
@@ -96,7 +85,7 @@ export function createPublicRouter(db, config = {}, eventHub = null) {
       return res.status(400).json({ erro: 'Data inválida. Use o formato YYYY-MM-DD.' });
     }
 
-    const horarios = getAvailableSlots({
+    const horarios = await getAvailableSlots({
       db,
       barbeiroId,
       data,
@@ -106,8 +95,7 @@ export function createPublicRouter(db, config = {}, eventHub = null) {
     res.json(horarios);
   });
 
-  // Cria um novo agendamento com trava contra horário duplicado (transação SQL)
-  router.post('/agendamentos', (req, res) => {
+  router.post('/agendamentos', async (req, res) => {
     const {
       barbeiroId = 'qualquer',
       servicoIds,
@@ -141,61 +129,51 @@ export function createPublicRouter(db, config = {}, eventHub = null) {
       return res.status(400).json({ erro: 'Informe um WhatsApp válido com DDD.' });
     }
 
-    // Busca os serviços reais no banco (nunca confia em preço vindo do navegador)
     const idsUnicos = [...new Set(servicoIds.map(Number).filter(Number.isInteger))];
     if (idsUnicos.length === 0) {
       return res.status(400).json({ erro: 'Serviços inválidos.' });
     }
 
     const placeholders = idsUnicos.map(() => '?').join(', ');
-    const servicos = db
-      .prepare(
-        `SELECT id, nome, duracao_min AS duracaoMin, preco_centavos AS precoCentavos
-         FROM servicos
-         WHERE ativo = 1 AND id IN (${placeholders})`
-      )
-      .all(...idsUnicos);
+    const servicos = await db.all(
+      `SELECT id, nome, duracao_min AS "duracaoMin", preco_centavos AS "precoCentavos"
+       FROM servicos
+       WHERE ativo = 1 AND id IN (${placeholders})`,
+      ...idsUnicos
+    );
 
     if (servicos.length !== idsUnicos.length) {
       return res.status(400).json({ erro: 'Um ou mais serviços selecionados não estão disponíveis.' });
     }
 
-    const duracaoTotalMin = servicos.reduce((acc, s) => acc + s.duracaoMin, 0);
-    const totalCentavos = servicos.reduce((acc, s) => acc + s.precoCentavos, 0);
+    const duracaoTotalMin = servicos.reduce((acc, s) => acc + Number(s.duracaoMin), 0);
+    const totalCentavos = servicos.reduce((acc, s) => acc + Number(s.precoCentavos), 0);
     const horaFim = formatMinutesToTime(parseTimeToMinutes(horaInicio) + duracaoTotalMin);
 
     try {
-      db.exec('BEGIN IMMEDIATE');
-
-      // Revalida disponibilidade dentro da transação para evitar agendamento duplo
-      const slotsLivres = getAvailableSlots({
-        db,
-        barbeiroId,
-        data,
-        duracaoMin: duracaoTotalMin
-      });
-
-      const slotEscolhido = slotsLivres.find((s) => s.horaInicio === horaInicio);
-      if (!slotEscolhido) {
-        db.exec('ROLLBACK');
-        return res.status(409).json({
-          erro: 'Ops! Esse horário acabou de ser ocupado. Escolha outro horário disponível.'
+      const resultado = await db.transaction(async (tx) => {
+        const slotsLivres = await getAvailableSlots({
+          db: tx,
+          barbeiroId,
+          data,
+          duracaoMin: duracaoTotalMin
         });
-      }
 
-      const barbeiroEscolhidoId =
-        barbeiroId === 'qualquer' ? slotEscolhido.barbeirosDisponiveis[0] : Number(barbeiroId);
+        const slotEscolhido = slotsLivres.find((s) => s.horaInicio === horaInicio);
+        if (!slotEscolhido) {
+          return { conflito: true };
+        }
 
-      const codigo = gerarCodigoAgendamento();
+        const barbeiroEscolhidoId =
+          barbeiroId === 'qualquer' ? slotEscolhido.barbeirosDisponiveis[0] : Number(barbeiroId);
 
-      const insertAg = db
-        .prepare(
+        const codigo = gerarCodigoAgendamento();
+
+        const agendamentoId = await tx.insert(
           `INSERT INTO agendamentos (
             codigo, barbeiro_id, cliente_nome, cliente_whatsapp,
             data, hora_inicio, hora_fim, duracao_total_min, total_centavos, observacoes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           codigo,
           barbeiroEscolhidoId,
           nomeLimpo,
@@ -208,54 +186,52 @@ export function createPublicRouter(db, config = {}, eventHub = null) {
           String(observacoes || '').trim() || null
         );
 
-      const agendamentoId = Number(insertAg.lastInsertRowid);
+        for (const servico of servicos) {
+          await tx.run(
+            `INSERT INTO agendamento_servicos (
+              agendamento_id, servico_id, nome_snapshot, preco_centavos_snapshot, duracao_min_snapshot
+            ) VALUES (?, ?, ?, ?, ?)`,
+            agendamentoId,
+            servico.id,
+            servico.nome,
+            servico.precoCentavos,
+            servico.duracaoMin
+          );
+        }
 
-      const insertItem = db.prepare(
-        `INSERT INTO agendamento_servicos (
-          agendamento_id, servico_id, nome_snapshot, preco_centavos_snapshot, duracao_min_snapshot
-        ) VALUES (?, ?, ?, ?, ?)`
-      );
-
-      for (const servico of servicos) {
-        insertItem.run(
-          agendamentoId,
-          servico.id,
-          servico.nome,
-          servico.precoCentavos,
-          servico.duracaoMin
+        const barbeiro = await tx.get(
+          'SELECT id, nome FROM barbeiros WHERE id = ?',
+          barbeiroEscolhidoId
         );
+
+        return {
+          conflito: false,
+          resposta: {
+            id: agendamentoId,
+            codigo,
+            barbeiro,
+            clienteNome: nomeLimpo,
+            clienteWhatsapp: whatsappLimpo,
+            data,
+            horaInicio,
+            horaFim,
+            duracaoTotalMin,
+            totalCentavos,
+            servicos,
+            status: 'agendado'
+          }
+        };
+      });
+
+      if (resultado.conflito) {
+        return res.status(409).json({
+          erro: 'Ops! Esse horário acabou de ser ocupado. Escolha outro horário disponível.'
+        });
       }
 
-      const barbeiro = db
-        .prepare('SELECT id, nome FROM barbeiros WHERE id = ?')
-        .get(barbeiroEscolhidoId);
-
-      db.exec('COMMIT');
-
-      const resposta = {
-        id: agendamentoId,
-        codigo,
-        barbeiro,
-        clienteNome: nomeLimpo,
-        clienteWhatsapp: whatsappLimpo,
-        data,
-        horaInicio,
-        horaFim,
-        duracaoTotalMin,
-        totalCentavos,
-        servicos,
-        status: 'agendado'
-      };
-
-      eventHub?.broadcast('novo_agendamento', resposta);
-
-      return res.status(201).json(resposta);
+      eventHub?.broadcast('novo_agendamento', resultado.resposta);
+      return res.status(201).json(resultado.resposta);
     } catch (error) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // transação já encerrada
-      }
       console.error('Erro ao criar agendamento:', error);
       return res.status(500).json({ erro: 'Não foi possível concluir o agendamento.' });
     }

@@ -1,6 +1,6 @@
 /**
  * Motor de cálculo de horários livres e calendário de disponibilidade.
- * Mantido em funções puras e diretas para ser 100% previsível e testável.
+ * Compatível com SQLite local e PostgreSQL na nuvem via interface assíncrona do db.
  */
 
 export function parseTimeToMinutes(timeStr) {
@@ -18,9 +18,6 @@ export function isValidDateString(dateStr) {
   return /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
 }
 
-/**
- * Converte "YYYY-MM-DD" para dia da semana (0=Dom ... 6=Sab) sem risco de fuso horário.
- */
 export function getDayOfWeek(dateStr) {
   const [year, month, day] = dateStr.split('-').map(Number);
   return new Date(year, month - 1, day).getDay();
@@ -43,10 +40,7 @@ function intervalsOverlap(startA, endA, startB, endB) {
   return startA < endB && endA > startB;
 }
 
-/**
- * Calcula os horários disponíveis para UM barbeiro específico em uma data.
- */
-export function getAvailableSlotsForBarber({
+export async function getAvailableSlotsForBarber({
   db,
   barbeiroId,
   data,
@@ -64,13 +58,13 @@ export function getAvailableSlotsForBarber({
   }
 
   const diaSemana = getDayOfWeek(data);
-  const expediente = db
-    .prepare(
-      `SELECT hora_inicio, hora_fim, almoco_inicio, almoco_fim
-       FROM horarios_trabalho
-       WHERE barbeiro_id = ? AND dia_semana = ?`
-    )
-    .get(barbeiroId, diaSemana);
+  const expediente = await db.get(
+    `SELECT hora_inicio, hora_fim, almoco_inicio, almoco_fim
+     FROM horarios_trabalho
+     WHERE barbeiro_id = ? AND dia_semana = ?`,
+    barbeiroId,
+    diaSemana
+  );
 
   if (!expediente) {
     return [];
@@ -79,7 +73,6 @@ export function getAvailableSlotsForBarber({
   const inicioExp = parseTimeToMinutes(expediente.hora_inicio);
   const fimExp = parseTimeToMinutes(expediente.hora_fim);
 
-  // Intervalos indisponíveis: almoço + bloqueios manuais + agendamentos ativos
   const ocupados = [];
 
   if (expediente.almoco_inicio && expediente.almoco_fim) {
@@ -89,13 +82,13 @@ export function getAvailableSlotsForBarber({
     });
   }
 
-  const bloqueios = db
-    .prepare(
-      `SELECT hora_inicio, hora_fim
-       FROM bloqueios
-       WHERE barbeiro_id = ? AND data = ?`
-    )
-    .all(barbeiroId, data);
+  const bloqueios = await db.all(
+    `SELECT hora_inicio, hora_fim
+     FROM bloqueios
+     WHERE barbeiro_id = ? AND data = ?`,
+    barbeiroId,
+    data
+  );
 
   for (const b of bloqueios) {
     ocupados.push({
@@ -104,13 +97,13 @@ export function getAvailableSlotsForBarber({
     });
   }
 
-  const agendamentos = db
-    .prepare(
-      `SELECT hora_inicio, hora_fim
-       FROM agendamentos
-       WHERE barbeiro_id = ? AND data = ? AND status != 'cancelado'`
-    )
-    .all(barbeiroId, data);
+  const agendamentos = await db.all(
+    `SELECT hora_inicio, hora_fim
+     FROM agendamentos
+     WHERE barbeiro_id = ? AND data = ? AND status != 'cancelado'`,
+    barbeiroId,
+    data
+  );
 
   for (const ag of agendamentos) {
     ocupados.push({
@@ -119,7 +112,6 @@ export function getAvailableSlotsForBarber({
     });
   }
 
-  // Margem de 15 minutos se for hoje (evita agendar um horário que já está passando)
   const minutoMinimoHoje =
     data === hojeStr ? agora.getHours() * 60 + agora.getMinutes() + 15 : -1;
 
@@ -147,10 +139,7 @@ export function getAvailableSlotsForBarber({
   return horariosLivres;
 }
 
-/**
- * Calcula horários disponíveis para um barbeiro específico OU para "qualquer" barbeiro ativo.
- */
-export function getAvailableSlots({
+export async function getAvailableSlots({
   db,
   barbeiroId,
   data,
@@ -169,14 +158,11 @@ export function getAvailableSlots({
     });
   }
 
-  const barbeirosAtivos = db
-    .prepare('SELECT id FROM barbeiros WHERE ativo = 1 ORDER BY id ASC')
-    .all();
-
+  const barbeirosAtivos = await db.all('SELECT id FROM barbeiros WHERE ativo = 1 ORDER BY id ASC');
   const mapaSlots = new Map();
 
   for (const b of barbeirosAtivos) {
-    const slots = getAvailableSlotsForBarber({
+    const slots = await getAvailableSlotsForBarber({
       db,
       barbeiroId: b.id,
       data,
@@ -190,10 +176,10 @@ export function getAvailableSlots({
         mapaSlots.set(slot.horaInicio, {
           horaInicio: slot.horaInicio,
           horaFim: slot.horaFim,
-          barbeirosDisponiveis: [b.id]
+          barbeirosDisponiveis: [Number(b.id)]
         });
       } else {
-        mapaSlots.get(slot.horaInicio).barbeirosDisponiveis.push(b.id);
+        mapaSlots.get(slot.horaInicio).barbeirosDisponiveis.push(Number(b.id));
       }
     }
   }
@@ -203,10 +189,7 @@ export function getAvailableSlots({
   );
 }
 
-/**
- * Retorna um resumo dos próximos N dias (hoje, amanhã, semana...) para o calendário do cliente.
- */
-export function getCalendarAvailability({
+export async function getCalendarAvailability({
   db,
   barbeiroId = 'qualquer',
   duracaoMin = 30,
@@ -220,7 +203,7 @@ export function getCalendarAvailability({
   for (let i = 0; i < totalDias; i++) {
     const data = addDaysToDateString(hojeStr, i);
     const diaSemana = getDayOfWeek(data);
-    const slots = getAvailableSlots({
+    const slots = await getAvailableSlots({
       db,
       barbeiroId,
       data,

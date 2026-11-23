@@ -109,4 +109,4 @@ npm test
 - [x] **Fase 1:** Base do projeto, banco SQLite, motor de horários livres, calendário de dias futuros e tela pública de agendamento
 - [x] **Fase 2:** Painel do barbeiro (`/admin`), login JWT, notificações ao vivo (SSE), gestão de serviços, equipe e folgas
 - [x] **Fase 3:** Controle de caixa, fechamento automático de atendimento, atendimento avulso, despesas, estatísticas e Pix Copia e Cola + WhatsApp
-- [ ] **Fase 4:** Refinamento visual (menos texto e UI mais enxuta), suporte a PostgreSQL na nuvem (Neon.tech), PWA instalável no celular e deploy no Render
+- [x] **Fase 4:** Refinamento visual, atalho 1 clique no Windows (`iniciar-seu-bigode.bat`), edição de serviços, troca de senha, adaptador duplo SQLite/PostgreSQL (Neon), PWA e deploy gratuito no Render (`render.yaml`)

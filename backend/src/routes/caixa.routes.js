@@ -8,8 +8,7 @@ export function createCaixaRouter(db, requireAuth) {
   const router = Router();
   router.use(requireAuth);
 
-  // Resumo estatístico: Hoje, Semana (7d), Mês, por Barbeiro, por Forma de Pagamento, Série 7d e Top Serviços
-  router.get('/resumo', (req, res) => {
+  router.get('/resumo', async (req, res) => {
     const hoje = formatLocalDate(new Date());
     const inicioSemana = addDaysToDateString(hoje, -6);
     const inicioMes = `${hoje.slice(0, 7)}-01`;
@@ -21,76 +20,94 @@ export function createCaixaRouter(db, requireAuth) {
     const filtroBarbeiroSql = barbeiroId ? ' AND barbeiro_id = ?' : '';
     const filtroBarbeiroParams = barbeiroId ? [barbeiroId] : [];
 
-    const somarPeriodo = (dataInicio, dataFim) => {
-      const row = db
-        .prepare(
-          `SELECT
-            COALESCE(SUM(CASE WHEN tipo = 'entrada' THEN valor_centavos ELSE 0 END), 0) AS entradasCentavos,
-            COALESCE(SUM(CASE WHEN tipo = 'saida' THEN valor_centavos ELSE 0 END), 0) AS saidasCentavos,
-            COUNT(CASE WHEN tipo = 'entrada' THEN 1 END) AS qtdEntradas
-           FROM movimentacoes_caixa
-           WHERE substr(data_hora, 1, 10) BETWEEN ? AND ?${filtroBarbeiroSql}`
-        )
-        .get(dataInicio, dataFim, ...filtroBarbeiroParams);
+    const somarPeriodo = async (dataInicio, dataFim) => {
+      const row = await db.get(
+        `SELECT
+          COALESCE(SUM(CASE WHEN tipo = 'entrada' THEN valor_centavos ELSE 0 END), 0) AS "entradasCentavos",
+          COALESCE(SUM(CASE WHEN tipo = 'saida' THEN valor_centavos ELSE 0 END), 0) AS "saidasCentavos",
+          COUNT(CASE WHEN tipo = 'entrada' THEN 1 END) AS "qtdEntradas"
+         FROM movimentacoes_caixa
+         WHERE substr(data_hora, 1, 10) BETWEEN ? AND ?${filtroBarbeiroSql}`,
+        dataInicio,
+        dataFim,
+        ...filtroBarbeiroParams
+      );
+
+      const entradasCentavos = Number(row?.entradasCentavos || 0);
+      const saidasCentavos = Number(row?.saidasCentavos || 0);
+      const qtdEntradas = Number(row?.qtdEntradas || 0);
 
       return {
-        entradasCentavos: row.entradasCentavos,
-        saidasCentavos: row.saidasCentavos,
-        saldoCentavos: row.entradasCentavos - row.saidasCentavos,
-        qtdEntradas: row.qtdEntradas,
-        ticketMedioCentavos:
-          row.qtdEntradas > 0 ? Math.round(row.entradasCentavos / row.qtdEntradas) : 0
+        entradasCentavos,
+        saidasCentavos,
+        saldoCentavos: entradasCentavos - saidasCentavos,
+        qtdEntradas,
+        ticketMedioCentavos: qtdEntradas > 0 ? Math.round(entradasCentavos / qtdEntradas) : 0
       };
     };
 
-    const resumoHoje = somarPeriodo(hoje, hoje);
-    const resumoSemana = somarPeriodo(inicioSemana, hoje);
-    const resumoMes = somarPeriodo(inicioMes, hoje);
+    const [resumoHoje, resumoSemana, resumoMes] = await Promise.all([
+      somarPeriodo(hoje, hoje),
+      somarPeriodo(inicioSemana, hoje),
+      somarPeriodo(inicioMes, hoje)
+    ]);
 
-    // Faturamento por barbeiro no mês
-    const porBarbeiro = db
-      .prepare(
-        `SELECT
-          b.id, b.nome,
-          COUNT(CASE WHEN m.tipo = 'entrada' THEN 1 END) AS qtdAtendimentos,
-          COALESCE(SUM(CASE WHEN m.tipo = 'entrada' THEN m.valor_centavos ELSE 0 END), 0) AS entradasCentavos
-         FROM barbeiros b
-         LEFT JOIN movimentacoes_caixa m
-           ON m.barbeiro_id = b.id
-          AND substr(m.data_hora, 1, 10) BETWEEN ? AND ?
-         WHERE b.ativo = 1
-         GROUP BY b.id, b.nome
-         ORDER BY entradasCentavos DESC, b.id ASC`
-      )
-      .all(inicioMes, hoje);
+    const porBarbeiroRows = await db.all(
+      `SELECT
+        b.id, b.nome,
+        COUNT(CASE WHEN m.tipo = 'entrada' THEN 1 END) AS "qtdAtendimentos",
+        COALESCE(SUM(CASE WHEN m.tipo = 'entrada' THEN m.valor_centavos ELSE 0 END), 0) AS "entradasCentavos"
+       FROM barbeiros b
+       LEFT JOIN movimentacoes_caixa m
+         ON m.barbeiro_id = b.id
+        AND substr(m.data_hora, 1, 10) BETWEEN ? AND ?
+       WHERE b.ativo = 1
+       GROUP BY b.id, b.nome
+       ORDER BY "entradasCentavos" DESC, b.id ASC`,
+      inicioMes,
+      hoje
+    );
 
-    // Quebra por forma de pagamento (entradas do mês)
-    const porFormaPagamento = db
-      .prepare(
-        `SELECT
-          forma_pagamento AS formaPagamento,
-          COUNT(*) AS qtd,
-          COALESCE(SUM(valor_centavos), 0) AS totalCentavos
-         FROM movimentacoes_caixa
-         WHERE tipo = 'entrada'
-           AND substr(data_hora, 1, 10) BETWEEN ? AND ?${filtroBarbeiroSql}
-         GROUP BY forma_pagamento
-         ORDER BY totalCentavos DESC`
-      )
-      .all(inicioMes, hoje, ...filtroBarbeiroParams);
+    const porBarbeiro = porBarbeiroRows.map((r) => ({
+      id: Number(r.id),
+      nome: r.nome,
+      qtdAtendimentos: Number(r.qtdAtendimentos || 0),
+      entradasCentavos: Number(r.entradasCentavos || 0)
+    }));
 
-    // Série diária dos últimos 7 dias para gráfico de barras
-    const rows7d = db
-      .prepare(
-        `SELECT
-          substr(data_hora, 1, 10) AS data,
-          COALESCE(SUM(CASE WHEN tipo = 'entrada' THEN valor_centavos ELSE 0 END), 0) AS entradasCentavos,
-          COALESCE(SUM(CASE WHEN tipo = 'saida' THEN valor_centavos ELSE 0 END), 0) AS saidasCentavos
-         FROM movimentacoes_caixa
-         WHERE substr(data_hora, 1, 10) BETWEEN ? AND ?${filtroBarbeiroSql}
-         GROUP BY substr(data_hora, 1, 10)`
-      )
-      .all(inicioSemana, hoje, ...filtroBarbeiroParams);
+    const porFormaRows = await db.all(
+      `SELECT
+        forma_pagamento AS "formaPagamento",
+        COUNT(*) AS qtd,
+        COALESCE(SUM(valor_centavos), 0) AS "totalCentavos"
+       FROM movimentacoes_caixa
+       WHERE tipo = 'entrada'
+         AND substr(data_hora, 1, 10) BETWEEN ? AND ?${filtroBarbeiroSql}
+       GROUP BY forma_pagamento
+       ORDER BY "totalCentavos" DESC`,
+      inicioMes,
+      hoje,
+      ...filtroBarbeiroParams
+    );
+
+    const porFormaPagamento = porFormaRows.map((r) => ({
+      formaPagamento: r.formaPagamento,
+      qtd: Number(r.qtd || 0),
+      totalCentavos: Number(r.totalCentavos || 0)
+    }));
+
+    const rows7d = await db.all(
+      `SELECT
+        substr(data_hora, 1, 10) AS data,
+        COALESCE(SUM(CASE WHEN tipo = 'entrada' THEN valor_centavos ELSE 0 END), 0) AS "entradasCentavos",
+        COALESCE(SUM(CASE WHEN tipo = 'saida' THEN valor_centavos ELSE 0 END), 0) AS "saidasCentavos"
+       FROM movimentacoes_caixa
+       WHERE substr(data_hora, 1, 10) BETWEEN ? AND ?${filtroBarbeiroSql}
+       GROUP BY substr(data_hora, 1, 10)`,
+      inicioSemana,
+      hoje,
+      ...filtroBarbeiroParams
+    );
 
     const mapa7d = new Map(rows7d.map((r) => [r.data, r]));
     const serie7Dias = [];
@@ -100,28 +117,34 @@ export function createCaixaRouter(db, requireAuth) {
       serie7Dias.push({
         data,
         label: `${data.slice(8, 10)}/${data.slice(5, 7)}`,
-        entradasCentavos: item ? item.entradasCentavos : 0,
-        saidasCentavos: item ? item.saidasCentavos : 0
+        entradasCentavos: Number(item?.entradasCentavos || 0),
+        saidasCentavos: Number(item?.saidasCentavos || 0)
       });
     }
 
-    // Top 5 serviços concluídos no mês
     const filtroBarbeiroAgSql = barbeiroId ? ' AND a.barbeiro_id = ?' : '';
-    const topServicos = db
-      .prepare(
-        `SELECT
-          s.nome_snapshot AS nome,
-          COUNT(*) AS qtd,
-          COALESCE(SUM(s.preco_centavos_snapshot), 0) AS totalCentavos
-         FROM agendamento_servicos s
-         JOIN agendamentos a ON a.id = s.agendamento_id
-         WHERE a.status = 'concluido'
-           AND a.data BETWEEN ? AND ?${filtroBarbeiroAgSql}
-         GROUP BY s.nome_snapshot
-         ORDER BY qtd DESC, totalCentavos DESC
-         LIMIT 5`
-      )
-      .all(inicioMes, hoje, ...filtroBarbeiroParams);
+    const topServicosRows = await db.all(
+      `SELECT
+        s.nome_snapshot AS nome,
+        COUNT(*) AS qtd,
+        COALESCE(SUM(s.preco_centavos_snapshot), 0) AS "totalCentavos"
+       FROM agendamento_servicos s
+       JOIN agendamentos a ON a.id = s.agendamento_id
+       WHERE a.status = 'concluido'
+         AND a.data BETWEEN ? AND ?${filtroBarbeiroAgSql}
+       GROUP BY s.nome_snapshot
+       ORDER BY qtd DESC, "totalCentavos" DESC
+       LIMIT 5`,
+      inicioMes,
+      hoje,
+      ...filtroBarbeiroParams
+    );
+
+    const topServicos = topServicosRows.map((r) => ({
+      nome: r.nome,
+      qtd: Number(r.qtd || 0),
+      totalCentavos: Number(r.totalCentavos || 0)
+    }));
 
     res.json({
       hoje: resumoHoje,
@@ -134,8 +157,7 @@ export function createCaixaRouter(db, requireAuth) {
     });
   });
 
-  // Histórico de movimentações
-  router.get('/movimentacoes', (req, res) => {
+  router.get('/movimentacoes', async (req, res) => {
     const hoje = formatLocalDate(new Date());
     const periodo = String(req.query.periodo || 'mes');
     const barbeiroId =
@@ -155,27 +177,30 @@ export function createCaixaRouter(db, requireAuth) {
       params.push(barbeiroId);
     }
 
-    const movimentacoes = db
-      .prepare(
-        `SELECT
-          m.id, m.agendamento_id AS agendamentoId,
-          m.barbeiro_id AS barbeiroId, b.nome AS barbeiroNome,
-          m.tipo, m.forma_pagamento AS formaPagamento,
-          m.valor_centavos AS valorCentavos,
-          m.descricao, m.data_hora AS dataHora
-         FROM movimentacoes_caixa m
-         JOIN barbeiros b ON b.id = m.barbeiro_id
-         WHERE ${condicoes.join(' AND ')}
-         ORDER BY m.data_hora DESC, m.id DESC
-         LIMIT 100`
-      )
-      .all(...params);
+    const rows = await db.all(
+      `SELECT
+        m.id, m.agendamento_id AS "agendamentoId",
+        m.barbeiro_id AS "barbeiroId", b.nome AS "barbeiroNome",
+        m.tipo, m.forma_pagamento AS "formaPagamento",
+        m.valor_centavos AS "valorCentavos",
+        m.descricao, m.data_hora AS "dataHora"
+       FROM movimentacoes_caixa m
+       JOIN barbeiros b ON b.id = m.barbeiro_id
+       WHERE ${condicoes.join(' AND ')}
+       ORDER BY m.data_hora DESC, m.id DESC
+       LIMIT 100`,
+      ...params
+    );
 
-    res.json(movimentacoes);
+    res.json(
+      rows.map((m) => ({
+        ...m,
+        valorCentavos: Number(m.valorCentavos)
+      }))
+    );
   });
 
-  // Lançamento manual (Atendimento Avulso "chegou na porta" OU Saída/Despesa)
-  router.post('/movimentacoes', (req, res) => {
+  router.post('/movimentacoes', async (req, res) => {
     const barbeiroId = Number(req.body?.barbeiroId || req.barbeiro.id);
     const tipo = String(req.body?.tipo || 'entrada');
     const formaPagamento = String(req.body?.formaPagamento || 'pix');
@@ -192,34 +217,36 @@ export function createCaixaRouter(db, requireAuth) {
       return res.status(400).json({ erro: 'Informe uma descrição para o lançamento.' });
     }
 
-    const result = db
-      .prepare(
-        `INSERT INTO movimentacoes_caixa (
-          agendamento_id, barbeiro_id, tipo, forma_pagamento, valor_centavos, descricao
-        ) VALUES (NULL, ?, ?, ?, ?, ?)`
-      )
-      .run(barbeiroId, tipo, formaPagamento, valorCentavos, descricao);
+    const id = await db.insert(
+      `INSERT INTO movimentacoes_caixa (
+        agendamento_id, barbeiro_id, tipo, forma_pagamento, valor_centavos, descricao
+      ) VALUES (NULL, ?, ?, ?, ?, ?)`,
+      barbeiroId,
+      tipo,
+      formaPagamento,
+      valorCentavos,
+      descricao
+    );
 
-    const criado = db
-      .prepare(
-        `SELECT
-          m.id, m.agendamento_id AS agendamentoId,
-          m.barbeiro_id AS barbeiroId, b.nome AS barbeiroNome,
-          m.tipo, m.forma_pagamento AS formaPagamento,
-          m.valor_centavos AS valorCentavos,
-          m.descricao, m.data_hora AS dataHora
-         FROM movimentacoes_caixa m
-         JOIN barbeiros b ON b.id = m.barbeiro_id
-         WHERE m.id = ?`
-      )
-      .get(Number(result.lastInsertRowid));
+    const criado = await db.get(
+      `SELECT
+        m.id, m.agendamento_id AS "agendamentoId",
+        m.barbeiro_id AS "barbeiroId", b.nome AS "barbeiroNome",
+        m.tipo, m.forma_pagamento AS "formaPagamento",
+        m.valor_centavos AS "valorCentavos",
+        m.descricao, m.data_hora AS "dataHora"
+       FROM movimentacoes_caixa m
+       JOIN barbeiros b ON b.id = m.barbeiro_id
+       WHERE m.id = ?`,
+      id
+    );
 
-    res.status(201).json(criado);
+    res.status(201).json({ ...criado, valorCentavos: Number(criado.valorCentavos) });
   });
 
-  router.delete('/movimentacoes/:id', (req, res) => {
+  router.delete('/movimentacoes/:id', async (req, res) => {
     const id = Number(req.params.id);
-    db.prepare('DELETE FROM movimentacoes_caixa WHERE id = ?').run(id);
+    await db.run('DELETE FROM movimentacoes_caixa WHERE id = ?', id);
     res.json({ ok: true });
   });
 

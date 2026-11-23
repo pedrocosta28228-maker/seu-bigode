@@ -21,18 +21,18 @@ export function createAdminRouter(db, eventHub, requireAuth) {
     eventHub.addClient(res);
   });
 
-  // Agenda por dia ou por intervalo semanal (dataInicio..dataFim)
-  router.get('/agendamentos', (req, res) => {
+  // Agenda por dia ou por intervalo (dataInicio..dataFim)
+  router.get('/agendamentos', async (req, res) => {
     const hoje = formatLocalDate(new Date());
     const data = req.query.data ? String(req.query.data) : '';
     const dataInicio = req.query.dataInicio ? String(req.query.dataInicio) : data || hoje;
     const dataFim = req.query.dataFim ? String(req.query.dataFim) : data || dataInicio;
-    const barbeiroId = req.query.barbeiroId && req.query.barbeiroId !== 'todos'
-      ? Number(req.query.barbeiroId)
-      : null;
-    const status = req.query.status && req.query.status !== 'todos'
-      ? String(req.query.status)
-      : null;
+    const barbeiroId =
+      req.query.barbeiroId && req.query.barbeiroId !== 'todos'
+        ? Number(req.query.barbeiroId)
+        : null;
+    const status =
+      req.query.status && req.query.status !== 'todos' ? String(req.query.status) : null;
 
     if (!isValidDateString(dataInicio) || !isValidDateString(dataFim)) {
       return res.status(400).json({ erro: 'Intervalo de datas inválido.' });
@@ -51,32 +51,36 @@ export function createAdminRouter(db, eventHub, requireAuth) {
       params.push(status);
     }
 
-    const rows = db
-      .prepare(
-        `SELECT
-          a.id, a.codigo, a.barbeiro_id AS barbeiroId, b.nome AS barbeiroNome,
-          a.cliente_nome AS clienteNome, a.cliente_whatsapp AS clienteWhatsapp,
-          a.data, a.hora_inicio AS horaInicio, a.hora_fim AS horaFim,
-          a.duracao_total_min AS duracaoTotalMin, a.total_centavos AS totalCentavos,
-          a.status, a.status_pagamento AS statusPagamento, a.observacoes, a.criado_em AS criadoEm
-        FROM agendamentos a
-        JOIN barbeiros b ON b.id = a.barbeiro_id
-        WHERE ${condicoes.join(' AND ')}
-        ORDER BY a.data ASC, a.hora_inicio ASC`
-      )
-      .all(...params);
-
-    const buscarItens = db.prepare(
-      `SELECT id, servico_id AS servicoId, nome_snapshot AS nome,
-              preco_centavos_snapshot AS precoCentavos, duracao_min_snapshot AS duracaoMin
-       FROM agendamento_servicos
-       WHERE agendamento_id = ?`
+    const rows = await db.all(
+      `SELECT
+        a.id, a.codigo, a.barbeiro_id AS "barbeiroId", b.nome AS "barbeiroNome",
+        a.cliente_nome AS "clienteNome", a.cliente_whatsapp AS "clienteWhatsapp",
+        a.data, a.hora_inicio AS "horaInicio", a.hora_fim AS "horaFim",
+        a.duracao_total_min AS "duracaoTotalMin", a.total_centavos AS "totalCentavos",
+        a.status, a.status_pagamento AS "statusPagamento", a.observacoes, a.criado_em AS "criadoEm"
+      FROM agendamentos a
+      JOIN barbeiros b ON b.id = a.barbeiro_id
+      WHERE ${condicoes.join(' AND ')}
+      ORDER BY a.data ASC, a.hora_inicio ASC`,
+      ...params
     );
 
-    const agendamentos = rows.map((row) => ({
-      ...row,
-      servicos: buscarItens.all(row.id)
-    }));
+    const agendamentos = [];
+    for (const row of rows) {
+      const servicos = await db.all(
+        `SELECT id, servico_id AS "servicoId", nome_snapshot AS nome,
+                preco_centavos_snapshot AS "precoCentavos", duracao_min_snapshot AS "duracaoMin"
+         FROM agendamento_servicos
+         WHERE agendamento_id = ?`,
+        row.id
+      );
+      agendamentos.push({
+        ...row,
+        duracaoTotalMin: Number(row.duracaoTotalMin),
+        totalCentavos: Number(row.totalCentavos),
+        servicos
+      });
+    }
 
     const ativos = agendamentos.filter((a) => a.status !== 'cancelado' && a.status !== 'no_show');
     const resumo = {
@@ -92,7 +96,7 @@ export function createAdminRouter(db, eventHub, requireAuth) {
   });
 
   // Atualiza status do atendimento (Confirmar, Concluir + lançar no caixa, Cancelar, Não compareceu)
-  router.patch('/agendamentos/:id/status', (req, res) => {
+  router.patch('/agendamentos/:id/status', async (req, res) => {
     const id = Number(req.params.id);
     const status = String(req.body?.status || '');
     const formaPagamento = ['pix', 'dinheiro', 'cartao'].includes(String(req.body?.formaPagamento || ''))
@@ -103,84 +107,82 @@ export function createAdminRouter(db, eventHub, requireAuth) {
       return res.status(400).json({ erro: 'Status ou agendamento inválido.' });
     }
 
-    const agendamento = db
-      .prepare(
-        `SELECT id, codigo, barbeiro_id AS barbeiroId, cliente_nome AS clienteNome,
-                total_centavos AS totalCentavos
-         FROM agendamentos
-         WHERE id = ?`
-      )
-      .get(id);
+    const agendamento = await db.get(
+      `SELECT id, codigo, barbeiro_id AS "barbeiroId", cliente_nome AS "clienteNome",
+              total_centavos AS "totalCentavos"
+       FROM agendamentos
+       WHERE id = ?`,
+      id
+    );
 
     if (!agendamento) {
       return res.status(404).json({ erro: 'Agendamento não encontrado.' });
     }
 
-    let lancadoNoCaixa = false;
-
-    db.exec('BEGIN IMMEDIATE');
     try {
-      if (status === 'concluido') {
-        const statusPag = formaPagamento === 'pix' ? 'pago_pix' : 'pago_local';
-        db.prepare('UPDATE agendamentos SET status = ?, status_pagamento = ? WHERE id = ?').run(
-          status,
-          statusPag,
-          id
-        );
-
-        const jaLancado = db
-          .prepare('SELECT id FROM movimentacoes_caixa WHERE agendamento_id = ?')
-          .get(id);
-
-        if (!jaLancado && agendamento.totalCentavos > 0) {
-          db.prepare(
-            `INSERT INTO movimentacoes_caixa (
-              agendamento_id, barbeiro_id, tipo, forma_pagamento, valor_centavos, descricao
-            ) VALUES (?, ?, 'entrada', ?, ?, ?)`
-          ).run(
-            id,
-            agendamento.barbeiroId,
-            formaPagamento,
-            agendamento.totalCentavos,
-            `Atendimento ${agendamento.codigo} — ${agendamento.clienteNome}`
+      const lancadoNoCaixa = await db.transaction(async (tx) => {
+        if (status === 'concluido') {
+          const statusPag = formaPagamento === 'pix' ? 'pago_pix' : 'pago_local';
+          await tx.run(
+            'UPDATE agendamentos SET status = ?, status_pagamento = ? WHERE id = ?',
+            status,
+            statusPag,
+            id
           );
-          lancadoNoCaixa = true;
-        }
-      } else {
-        db.prepare('UPDATE agendamentos SET status = ? WHERE id = ?').run(status, id);
-      }
 
-      db.exec('COMMIT');
+          const jaLancado = await tx.get(
+            'SELECT id FROM movimentacoes_caixa WHERE agendamento_id = ?',
+            id
+          );
+
+          if (!jaLancado && Number(agendamento.totalCentavos) > 0) {
+            await tx.run(
+              `INSERT INTO movimentacoes_caixa (
+                agendamento_id, barbeiro_id, tipo, forma_pagamento, valor_centavos, descricao
+              ) VALUES (?, ?, 'entrada', ?, ?, ?)`,
+              id,
+              agendamento.barbeiroId,
+              formaPagamento,
+              Number(agendamento.totalCentavos),
+              `Atendimento ${agendamento.codigo} — ${agendamento.clienteNome}`
+            );
+            return true;
+          }
+          return false;
+        }
+
+        await tx.run('UPDATE agendamentos SET status = ? WHERE id = ?', status, id);
+        return false;
+      });
+
+      eventHub.broadcast('status_atualizado', { id, status, lancadoNoCaixa });
+      return res.json({ id, status, lancadoNoCaixa });
     } catch (error) {
-      try {
-        db.exec('ROLLBACK');
-      } catch {
-        // já encerrada
-      }
       console.error('Erro ao atualizar status:', error);
       return res.status(500).json({ erro: 'Não foi possível atualizar o status.' });
     }
-
-    eventHub.broadcast('status_atualizado', { id, status, lancadoNoCaixa });
-    res.json({ id, status, lancadoNoCaixa });
   });
 
   // ===================== SERVIÇOS (CRUD) =====================
-  router.get('/servicos', (_req, res) => {
-    const servicos = db
-      .prepare(
-        `SELECT id, nome, descricao, categoria, duracao_min AS duracaoMin,
-                preco_centavos AS precoCentavos, ativo
-         FROM servicos
-         ORDER BY ativo DESC, categoria ASC, id ASC`
-      )
-      .all()
-      .map((s) => ({ ...s, ativo: Boolean(s.ativo) }));
+  router.get('/servicos', async (_req, res) => {
+    const rows = await db.all(
+      `SELECT id, nome, descricao, categoria, duracao_min AS "duracaoMin",
+              preco_centavos AS "precoCentavos", ativo
+       FROM servicos
+       ORDER BY ativo DESC, categoria ASC, id ASC`
+    );
 
-    res.json(servicos);
+    res.json(
+      rows.map((s) => ({
+        ...s,
+        duracaoMin: Number(s.duracaoMin),
+        precoCentavos: Number(s.precoCentavos),
+        ativo: Boolean(s.ativo)
+      }))
+    );
   });
 
-  router.post('/servicos', (req, res) => {
+  router.post('/servicos', async (req, res) => {
     const nome = String(req.body?.nome || '').trim();
     const descricao = String(req.body?.descricao || '').trim();
     const categoria = String(req.body?.categoria || 'cabelo');
@@ -194,15 +196,18 @@ export function createAdminRouter(db, eventHub, requireAuth) {
       return res.status(400).json({ erro: 'Duração e preço devem ser valores válidos.' });
     }
 
-    const result = db
-      .prepare(
-        `INSERT INTO servicos (nome, descricao, categoria, duracao_min, preco_centavos, ativo)
-         VALUES (?, ?, ?, ?, ?, 1)`
-      )
-      .run(nome, descricao || null, categoria, duracaoMin, precoCentavos);
+    const id = await db.insert(
+      `INSERT INTO servicos (nome, descricao, categoria, duracao_min, preco_centavos, ativo)
+       VALUES (?, ?, ?, ?, ?, 1)`,
+      nome,
+      descricao || null,
+      categoria,
+      duracaoMin,
+      precoCentavos
+    );
 
     res.status(201).json({
-      id: Number(result.lastInsertRowid),
+      id,
       nome,
       descricao: descricao || null,
       categoria,
@@ -212,30 +217,42 @@ export function createAdminRouter(db, eventHub, requireAuth) {
     });
   });
 
-  router.put('/servicos/:id', (req, res) => {
+  router.put('/servicos/:id', async (req, res) => {
     const id = Number(req.params.id);
-    const atual = db.prepare('SELECT * FROM servicos WHERE id = ?').get(id);
+    const atual = await db.get('SELECT * FROM servicos WHERE id = ?', id);
     if (!atual) {
       return res.status(404).json({ erro: 'Serviço não encontrado.' });
     }
 
     const nome = req.body?.nome !== undefined ? String(req.body.nome).trim() : atual.nome;
-    const descricao = req.body?.descricao !== undefined ? String(req.body.descricao).trim() : atual.descricao;
-    const categoria = req.body?.categoria !== undefined ? String(req.body.categoria) : atual.categoria;
-    const duracaoMin = req.body?.duracaoMin !== undefined ? Number(req.body.duracaoMin) : atual.duracao_min;
+    const descricao =
+      req.body?.descricao !== undefined ? String(req.body.descricao).trim() : atual.descricao;
+    const categoria =
+      req.body?.categoria !== undefined ? String(req.body.categoria) : atual.categoria;
+    const duracaoMin =
+      req.body?.duracaoMin !== undefined ? Number(req.body.duracaoMin) : Number(atual.duracao_min);
     const precoCentavos =
-      req.body?.precoCentavos !== undefined ? Math.round(Number(req.body.precoCentavos)) : atual.preco_centavos;
+      req.body?.precoCentavos !== undefined
+        ? Math.round(Number(req.body.precoCentavos))
+        : Number(atual.preco_centavos);
     const ativo = req.body?.ativo !== undefined ? (req.body.ativo ? 1 : 0) : atual.ativo;
 
     if (nome.length < 2 || !CATEGORIAS_VALIDAS.has(categoria) || duracaoMin < 5 || precoCentavos < 0) {
       return res.status(400).json({ erro: 'Dados do serviço inválidos.' });
     }
 
-    db.prepare(
+    await db.run(
       `UPDATE servicos
        SET nome = ?, descricao = ?, categoria = ?, duracao_min = ?, preco_centavos = ?, ativo = ?
-       WHERE id = ?`
-    ).run(nome, descricao || null, categoria, duracaoMin, precoCentavos, ativo, id);
+       WHERE id = ?`,
+      nome,
+      descricao || null,
+      categoria,
+      duracaoMin,
+      precoCentavos,
+      ativo,
+      id
+    );
 
     res.json({
       id,
@@ -249,20 +266,17 @@ export function createAdminRouter(db, eventHub, requireAuth) {
   });
 
   // ===================== EQUIPE / BARBEIROS =====================
-  router.get('/barbeiros', (_req, res) => {
-    const barbeiros = db
-      .prepare(
-        `SELECT id, nome, especialidade, telefone, email, papel, ativo
-         FROM barbeiros
-         ORDER BY CASE WHEN papel = 'dono' THEN 0 ELSE 1 END, id ASC`
-      )
-      .all()
-      .map((b) => ({ ...b, ativo: Boolean(b.ativo) }));
+  router.get('/barbeiros', async (_req, res) => {
+    const rows = await db.all(
+      `SELECT id, nome, especialidade, telefone, email, papel, ativo
+       FROM barbeiros
+       ORDER BY CASE WHEN papel = 'dono' THEN 0 ELSE 1 END, id ASC`
+    );
 
-    res.json(barbeiros);
+    res.json(rows.map((b) => ({ ...b, ativo: Boolean(b.ativo) })));
   });
 
-  router.post('/barbeiros', (req, res) => {
+  router.post('/barbeiros', async (req, res) => {
     const nome = String(req.body?.nome || '').trim();
     const especialidade = String(req.body?.especialidade || 'Barbeiro').trim();
     const telefone = String(req.body?.telefone || '').replace(/\D/g, '');
@@ -273,30 +287,35 @@ export function createAdminRouter(db, eventHub, requireAuth) {
       return res.status(400).json({ erro: 'Informe nome, email válido e senha (mín. 4 caracteres).' });
     }
 
-    const jaExiste = db.prepare('SELECT id FROM barbeiros WHERE lower(email) = ?').get(email);
+    const jaExiste = await db.get('SELECT id FROM barbeiros WHERE lower(email) = ?', email);
     if (jaExiste) {
       return res.status(409).json({ erro: 'Já existe um barbeiro cadastrado com esse email.' });
     }
 
     const senhaHash = hashPassword(senha);
-    const result = db
-      .prepare(
-        `INSERT INTO barbeiros (nome, especialidade, telefone, email, senha_hash, papel, ativo)
-         VALUES (?, ?, ?, ?, ?, 'barbeiro', 1)`
-      )
-      .run(nome, especialidade, telefone || null, email, senhaHash);
-
-    const novoId = Number(result.lastInsertRowid);
-
-    // Cria expediente padrão real (Seg–Sex 07h–19h com almoço 12h–14h; Sábado 07h–12h)
-    const insertHorario = db.prepare(
-      `INSERT INTO horarios_trabalho (barbeiro_id, dia_semana, hora_inicio, hora_fim, almoco_inicio, almoco_fim)
-       VALUES (?, ?, ?, ?, ?, ?)`
+    const novoId = await db.insert(
+      `INSERT INTO barbeiros (nome, especialidade, telefone, email, senha_hash, papel, ativo)
+       VALUES (?, ?, ?, ?, ?, 'barbeiro', 1)`,
+      nome,
+      especialidade,
+      telefone || null,
+      email,
+      senhaHash
     );
+
     for (const dia of [1, 2, 3, 4, 5]) {
-      insertHorario.run(novoId, dia, '07:00', '19:00', '12:00', '14:00');
+      await db.run(
+        `INSERT INTO horarios_trabalho (barbeiro_id, dia_semana, hora_inicio, hora_fim, almoco_inicio, almoco_fim)
+         VALUES (?, ?, '07:00', '19:00', '12:00', '14:00')`,
+        novoId,
+        dia
+      );
     }
-    insertHorario.run(novoId, 6, '07:00', '12:00', null, null);
+    await db.run(
+      `INSERT INTO horarios_trabalho (barbeiro_id, dia_semana, hora_inicio, hora_fim, almoco_inicio, almoco_fim)
+       VALUES (?, 6, '07:00', '12:00', NULL, NULL)`,
+      novoId
+    );
 
     res.status(201).json({
       id: novoId,
@@ -309,9 +328,9 @@ export function createAdminRouter(db, eventHub, requireAuth) {
     });
   });
 
-  router.patch('/barbeiros/:id', (req, res) => {
+  router.patch('/barbeiros/:id', async (req, res) => {
     const id = Number(req.params.id);
-    const atual = db.prepare('SELECT * FROM barbeiros WHERE id = ?').get(id);
+    const atual = await db.get('SELECT * FROM barbeiros WHERE id = ?', id);
     if (!atual) {
       return res.status(404).json({ erro: 'Barbeiro não encontrado.' });
     }
@@ -323,9 +342,14 @@ export function createAdminRouter(db, eventHub, requireAuth) {
       req.body?.telefone !== undefined ? String(req.body.telefone).replace(/\D/g, '') : atual.telefone;
     const ativo = req.body?.ativo !== undefined ? (req.body.ativo ? 1 : 0) : atual.ativo;
 
-    db.prepare(
-      `UPDATE barbeiros SET nome = ?, especialidade = ?, telefone = ?, ativo = ? WHERE id = ?`
-    ).run(nome, especialidade, telefone || null, ativo, id);
+    await db.run(
+      `UPDATE barbeiros SET nome = ?, especialidade = ?, telefone = ?, ativo = ? WHERE id = ?`,
+      nome,
+      especialidade,
+      telefone || null,
+      ativo,
+      id
+    );
 
     res.json({
       id,
@@ -339,14 +363,12 @@ export function createAdminRouter(db, eventHub, requireAuth) {
   });
 
   // ===================== CONFIGURAÇÕES (PIX & WHATSAPP) =====================
-  router.get('/config', (_req, res) => {
-    const cfg = db
-      .prepare(
-        `SELECT nome, whatsapp, pix_chave AS pixChave, pix_tipo AS pixTipo, pix_titular AS pixTitular
-         FROM configuracoes_barbearia
-         WHERE id = 1`
-      )
-      .get();
+  router.get('/config', async (_req, res) => {
+    const cfg = await db.get(
+      `SELECT nome, whatsapp, pix_chave AS "pixChave", pix_tipo AS "pixTipo", pix_titular AS "pixTitular"
+       FROM configuracoes_barbearia
+       WHERE id = 1`
+    );
     res.json(
       cfg || {
         nome: 'Seu Bigode',
@@ -358,14 +380,14 @@ export function createAdminRouter(db, eventHub, requireAuth) {
     );
   });
 
-  router.put('/config', (req, res) => {
+  router.put('/config', async (req, res) => {
     const nome = String(req.body?.nome || 'Seu Bigode').trim();
     const whatsapp = String(req.body?.whatsapp || '').replace(/\D/g, '');
     const pixChave = String(req.body?.pixChave || '').trim();
     const pixTipo = String(req.body?.pixTipo || 'Celular').trim();
     const pixTitular = String(req.body?.pixTitular || '').trim();
 
-    db.prepare(
+    await db.run(
       `INSERT INTO configuracoes_barbearia (id, nome, whatsapp, pix_chave, pix_tipo, pix_titular)
        VALUES (1, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
@@ -373,48 +395,53 @@ export function createAdminRouter(db, eventHub, requireAuth) {
          whatsapp = excluded.whatsapp,
          pix_chave = excluded.pix_chave,
          pix_tipo = excluded.pix_tipo,
-         pix_titular = excluded.pix_titular`
-    ).run(nome || 'Seu Bigode', whatsapp || '5511999999999', pixChave, pixTipo, pixTitular);
+         pix_titular = excluded.pix_titular`,
+      nome || 'Seu Bigode',
+      whatsapp || '5511999999999',
+      pixChave,
+      pixTipo,
+      pixTitular
+    );
 
     res.json({ nome, whatsapp, pixChave, pixTipo, pixTitular });
   });
 
   // ===================== BLOQUEIOS / FOLGAS =====================
-  router.get('/bloqueios', (req, res) => {
+  router.get('/bloqueios', async (req, res) => {
     const hoje = formatLocalDate(new Date());
-    const barbeiroId = req.query.barbeiroId && req.query.barbeiroId !== 'todos'
-      ? Number(req.query.barbeiroId)
-      : null;
+    const barbeiroId =
+      req.query.barbeiroId && req.query.barbeiroId !== 'todos'
+        ? Number(req.query.barbeiroId)
+        : null;
 
     const rows = barbeiroId
-      ? db
-          .prepare(
-            `SELECT bl.id, bl.barbeiro_id AS barbeiroId, b.nome AS barbeiroNome,
-                    bl.data, bl.hora_inicio AS horaInicio, bl.hora_fim AS horaFim, bl.motivo
-             FROM bloqueios bl
-             JOIN barbeiros b ON b.id = bl.barbeiro_id
-             WHERE bl.barbeiro_id = ? AND bl.data >= ?
-             ORDER BY bl.data ASC, bl.hora_inicio ASC`
-          )
-          .all(barbeiroId, hoje)
-      : db
-          .prepare(
-            `SELECT bl.id, bl.barbeiro_id AS barbeiroId, b.nome AS barbeiroNome,
-                    bl.data, bl.hora_inicio AS horaInicio, bl.hora_fim AS horaFim, bl.motivo
-             FROM bloqueios bl
-             JOIN barbeiros b ON b.id = bl.barbeiro_id
-             WHERE bl.data >= ?
-             ORDER BY bl.data ASC, bl.hora_inicio ASC`
-          )
-          .all(hoje);
+      ? await db.all(
+          `SELECT bl.id, bl.barbeiro_id AS "barbeiroId", b.nome AS "barbeiroNome",
+                  bl.data, bl.hora_inicio AS "horaInicio", bl.hora_fim AS "horaFim", bl.motivo
+           FROM bloqueios bl
+           JOIN barbeiros b ON b.id = bl.barbeiro_id
+           WHERE bl.barbeiro_id = ? AND bl.data >= ?
+           ORDER BY bl.data ASC, bl.hora_inicio ASC`,
+          barbeiroId,
+          hoje
+        )
+      : await db.all(
+          `SELECT bl.id, bl.barbeiro_id AS "barbeiroId", b.nome AS "barbeiroNome",
+                  bl.data, bl.hora_inicio AS "horaInicio", bl.hora_fim AS "horaFim", bl.motivo
+           FROM bloqueios bl
+           JOIN barbeiros b ON b.id = bl.barbeiro_id
+           WHERE bl.data >= ?
+           ORDER BY bl.data ASC, bl.hora_inicio ASC`,
+          hoje
+        );
 
     res.json(rows);
   });
 
-  router.post('/bloqueios', (req, res) => {
+  router.post('/bloqueios', async (req, res) => {
     const barbeiroId = Number(req.body?.barbeiroId);
     const data = String(req.body?.data || '');
-    const horaInicio = String(req.body?.horaInicio || '09:00');
+    const horaInicio = String(req.body?.horaInicio || '07:00');
     const horaFim = String(req.body?.horaFim || '19:00');
     const motivo = String(req.body?.motivo || 'Folga / Compromisso').trim();
 
@@ -425,17 +452,20 @@ export function createAdminRouter(db, eventHub, requireAuth) {
       return res.status(400).json({ erro: 'Horário de início deve ser anterior ao término.' });
     }
 
-    const result = db
-      .prepare(
-        `INSERT INTO bloqueios (barbeiro_id, data, hora_inicio, hora_fim, motivo)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(barbeiroId, data, horaInicio, horaFim, motivo);
+    const id = await db.insert(
+      `INSERT INTO bloqueios (barbeiro_id, data, hora_inicio, hora_fim, motivo)
+       VALUES (?, ?, ?, ?, ?)`,
+      barbeiroId,
+      data,
+      horaInicio,
+      horaFim,
+      motivo
+    );
 
-    const barbeiro = db.prepare('SELECT nome FROM barbeiros WHERE id = ?').get(barbeiroId);
+    const barbeiro = await db.get('SELECT nome FROM barbeiros WHERE id = ?', barbeiroId);
 
     res.status(201).json({
-      id: Number(result.lastInsertRowid),
+      id,
       barbeiroId,
       barbeiroNome: barbeiro?.nome || '',
       data,
@@ -445,9 +475,9 @@ export function createAdminRouter(db, eventHub, requireAuth) {
     });
   });
 
-  router.delete('/bloqueios/:id', (req, res) => {
+  router.delete('/bloqueios/:id', async (req, res) => {
     const id = Number(req.params.id);
-    db.prepare('DELETE FROM bloqueios WHERE id = ?').run(id);
+    await db.run('DELETE FROM bloqueios WHERE id = ?', id);
     res.json({ ok: true });
   });
 

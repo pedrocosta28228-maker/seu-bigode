@@ -10,8 +10,8 @@ describe('API Pública de Agendamento (Seu Bigode)', () => {
   let db;
 
   before(async () => {
-    db = createDatabase(':memory:');
-    seedDatabase(db);
+    db = await createDatabase(':memory:');
+    await seedDatabase(db);
     const app = createApp(db);
 
     await new Promise((resolve) => {

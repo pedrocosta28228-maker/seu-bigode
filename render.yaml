@@ -1,4 +1,4 @@
-# Blueprint de deploy no Render.com (Barbearia Seu Bigode)
+# Blueprint de deploy gratuito no Render.com (Barbearia Seu Bigode)
 services:
   - type: web
     name: seu-bigode-barbearia
@@ -12,3 +12,5 @@ services:
         value: production
       - key: JWT_SECRET
         generateValue: true
+      - key: DATABASE_URL
+        sync: false

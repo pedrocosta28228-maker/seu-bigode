@@ -125,13 +125,21 @@ export function AdminPage({ barbeiroLogado, onAtualizarBarbeiroLogado, onLogout,
   const [mensagem, setMensagem] = useState('');
   const [concluindoId, setConcluindoId] = useState(null);
 
-  // Edição inline de barbeiro
+  // Edição inline de barbeiro e serviço + troca de senha
   const [editandoBarbeiroId, setEditandoBarbeiroId] = useState(null);
   const [formEditBarbeiro, setFormEditBarbeiro] = useState({
     nome: '',
     especialidade: '',
     telefone: ''
   });
+  const [editandoServicoId, setEditandoServicoId] = useState(null);
+  const [formEditServico, setFormEditServico] = useState({
+    nome: '',
+    categoria: 'cabelo',
+    duracaoMin: 30,
+    precoReais: '40,00'
+  });
+  const [formSenha, setFormSenha] = useState({ senhaAtual: '', novaSenha: '' });
 
   // Formulários rápidos
   const [novoServico, setNovoServico] = useState({
@@ -302,6 +310,47 @@ export function AdminPage({ barbeiroLogado, onAtualizarBarbeiroLogado, onLogout,
       setNovoServico({ nome: '', descricao: '', categoria: 'cabelo', duracaoMin: 30, precoReais: '40' });
       await carregarGestao();
       setMensagem('Serviço adicionado com sucesso!');
+    } catch (err) {
+      setMensagem(err.message);
+    }
+  }
+
+  function iniciarEdicaoServico(s) {
+    setEditandoServicoId(s.id);
+    setFormEditServico({
+      nome: s.nome,
+      categoria: s.categoria,
+      duracaoMin: s.duracaoMin,
+      precoReais: (s.precoCentavos / 100).toFixed(2).replace('.', ',')
+    });
+  }
+
+  async function handleSalvarEdicaoServico(e, id) {
+    e.preventDefault();
+    setMensagem('');
+    try {
+      const precoNum = Number(String(formEditServico.precoReais).replace(',', '.'));
+      await adminApi.atualizarServico(id, {
+        nome: formEditServico.nome,
+        categoria: formEditServico.categoria,
+        duracaoMin: Number(formEditServico.duracaoMin),
+        precoCentavos: Math.round(precoNum * 100)
+      });
+      setEditandoServicoId(null);
+      await carregarGestao();
+      setMensagem('Serviço atualizado com sucesso!');
+    } catch (err) {
+      setMensagem(err.message);
+    }
+  }
+
+  async function handleAlterarSenha(e) {
+    e.preventDefault();
+    setMensagem('');
+    try {
+      await adminApi.alterarSenha(formSenha.senhaAtual, formSenha.novaSenha);
+      setFormSenha({ senhaAtual: '', novaSenha: '' });
+      setMensagem('Sua senha foi alterada com sucesso!');
     } catch (err) {
       setMensagem(err.message);
     }
@@ -855,24 +904,114 @@ export function AdminPage({ barbeiroLogado, onAtualizarBarbeiroLogado, onLogout,
             </form>
 
             <div className="gestao-lista">
-              {servicos.map((s) => (
-                <div key={s.id} className={`gestao-item ${!s.ativo ? 'inativo' : ''}`}>
-                  <div>
-                    <strong>{s.nome}</strong>
-                    <span>
-                      {s.categoria} • {formatDuration(s.duracaoMin)} •{' '}
-                      {formatCurrency(s.precoCentavos)}
-                    </span>
+              {servicos.map((s) => {
+                if (editandoServicoId === s.id) {
+                  return (
+                    <form
+                      key={s.id}
+                      onSubmit={(e) => handleSalvarEdicaoServico(e, s.id)}
+                      className="secao-card form-editar-barbeiro"
+                    >
+                      <div className="campos-grid">
+                        <div className="campo">
+                          <label htmlFor={`edit-s-nome-${s.id}`}>Nome do serviço</label>
+                          <input
+                            id={`edit-s-nome-${s.id}`}
+                            type="text"
+                            value={formEditServico.nome}
+                            onChange={(e) =>
+                              setFormEditServico({ ...formEditServico, nome: e.target.value })
+                            }
+                            required
+                          />
+                        </div>
+                        <div className="campo">
+                          <label htmlFor={`edit-s-cat-${s.id}`}>Categoria</label>
+                          <select
+                            id={`edit-s-cat-${s.id}`}
+                            className="select-admin"
+                            value={formEditServico.categoria}
+                            onChange={(e) =>
+                              setFormEditServico({ ...formEditServico, categoria: e.target.value })
+                            }
+                          >
+                            <option value="cabelo">Cabelo</option>
+                            <option value="barba">Barba</option>
+                            <option value="combo">Combo</option>
+                            <option value="extra">Extra</option>
+                          </select>
+                        </div>
+                        <div className="campo">
+                          <label htmlFor={`edit-s-dur-${s.id}`}>Duração (min)</label>
+                          <input
+                            id={`edit-s-dur-${s.id}`}
+                            type="number"
+                            min="5"
+                            step="5"
+                            value={formEditServico.duracaoMin}
+                            onChange={(e) =>
+                              setFormEditServico({ ...formEditServico, duracaoMin: e.target.value })
+                            }
+                            required
+                          />
+                        </div>
+                        <div className="campo">
+                          <label htmlFor={`edit-s-preco-${s.id}`}>Preço (R$)</label>
+                          <input
+                            id={`edit-s-preco-${s.id}`}
+                            type="text"
+                            value={formEditServico.precoReais}
+                            onChange={(e) =>
+                              setFormEditServico({ ...formEditServico, precoReais: e.target.value })
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="editar-acoes">
+                        <button type="submit" className="btn-primario">
+                          <Save size={15} /> Salvar serviço
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secundario"
+                          onClick={() => setEditandoServicoId(null)}
+                        >
+                          <X size={15} /> Cancelar
+                        </button>
+                      </div>
+                    </form>
+                  );
+                }
+
+                return (
+                  <div key={s.id} className={`gestao-item ${!s.ativo ? 'inativo' : ''}`}>
+                    <div>
+                      <strong>{s.nome}</strong>
+                      <span>
+                        {s.categoria} • {formatDuration(s.duracaoMin)} •{' '}
+                        {formatCurrency(s.precoCentavos)}
+                      </span>
+                    </div>
+                    <div className="gestao-item-acoes">
+                      <button
+                        type="button"
+                        className="btn-secundario"
+                        onClick={() => iniciarEdicaoServico(s)}
+                      >
+                        <Pencil size={14} /> Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secundario"
+                        onClick={() => handleToggleServico(s)}
+                      >
+                        {s.ativo ? 'Desativar' : 'Reativar'}
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-secundario"
-                    onClick={() => handleToggleServico(s)}
-                  >
-                    {s.ativo ? 'Desativar' : 'Reativar'}
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
@@ -942,6 +1081,37 @@ export function AdminPage({ barbeiroLogado, onAtualizarBarbeiroLogado, onLogout,
               </div>
               <button type="submit" className="btn-primario">
                 <Save size={16} /> Salvar Pix & WhatsApp
+              </button>
+            </form>
+
+            {/* Alterar própria senha */}
+            <form onSubmit={handleAlterarSenha} className="secao-card form-gestao">
+              <h2>Alterar Minha Senha</h2>
+              <div className="campos-grid">
+                <div className="campo">
+                  <label htmlFor="senha-atual">Senha atual</label>
+                  <input
+                    id="senha-atual"
+                    type="password"
+                    value={formSenha.senhaAtual}
+                    onChange={(e) => setFormSenha({ ...formSenha, senhaAtual: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="campo">
+                  <label htmlFor="senha-nova">Nova senha (mín. 4 caracteres)</label>
+                  <input
+                    id="senha-nova"
+                    type="password"
+                    minLength={4}
+                    value={formSenha.novaSenha}
+                    onChange={(e) => setFormSenha({ ...formSenha, novaSenha: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+              <button type="submit" className="btn-primario">
+                <Save size={16} /> Atualizar Senha
               </button>
             </form>
 

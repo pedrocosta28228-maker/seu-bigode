@@ -11,8 +11,8 @@ describe('API de Caixa e Estatísticas (Fase 3)', () => {
   let token;
 
   before(async () => {
-    db = createDatabase(':memory:');
-    seedDatabase(db);
+    db = await createDatabase(':memory:');
+    await seedDatabase(db);
     const app = createApp(db, { jwtSecret: 'test-secret-caixa' });
 
     await new Promise((resolve) => {

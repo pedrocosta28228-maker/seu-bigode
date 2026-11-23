@@ -43,6 +43,11 @@ export const adminApi = {
     return data;
   },
   me: () => adminRequest('/api/auth/me'),
+  alterarSenha: (senhaAtual, novaSenha) =>
+    adminRequest('/api/auth/senha', {
+      method: 'PATCH',
+      body: JSON.stringify({ senhaAtual, novaSenha })
+    }),
   logout: () => setStoredToken(''),
 
   getAgendamentos: ({ data, dataInicio, dataFim, barbeiroId = 'todos', status = 'todos' }) => {

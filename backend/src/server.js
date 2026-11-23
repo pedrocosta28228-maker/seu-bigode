@@ -20,7 +20,8 @@ export function createApp(db, config = {}) {
   const app = express();
   const eventHub = createEventHub();
   const isProd = process.env.NODE_ENV === 'production';
-  const jwtSecret = config.jwtSecret || process.env.JWT_SECRET || (isProd ? '' : 'seu-bigode-dev-secret-local');
+  const jwtSecret =
+    config.jwtSecret || process.env.JWT_SECRET || (isProd ? '' : 'seu-bigode-dev-secret-local');
 
   if (isProd && !jwtSecret) {
     throw new Error('JWT_SECRET é obrigatório em produção.');
@@ -32,7 +33,7 @@ export function createApp(db, config = {}) {
   app.use(express.json());
 
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', app: 'seu-bigode' });
+    res.json({ status: 'ok', app: 'seu-bigode', db: db.type });
   });
 
   app.use('/api/public', createPublicRouter(db, config, eventHub));
@@ -59,8 +60,8 @@ if (isMainModule) {
   const port = Number(process.env.PORT) || 3001;
   const dbPath = process.env.DB_PATH || join(__dirname, '..', 'seu-bigode.db');
 
-  const db = createDatabase(dbPath);
-  seedDatabase(db);
+  const db = await createDatabase({ dbPath });
+  await seedDatabase(db);
 
   const app = createApp(db, {
     barbeariaNome: process.env.BARBEARIA_NOME || 'Seu Bigode',
@@ -69,6 +70,6 @@ if (isMainModule) {
   });
 
   app.listen(port, () => {
-    console.log(`💈 Barbearia Seu Bigode rodando em http://localhost:${port}`);
+    console.log(`💈 Barbearia Seu Bigode rodando em http://localhost:${port} (banco: ${db.type})`);
   });
 }
